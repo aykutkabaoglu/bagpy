@@ -139,9 +139,6 @@ class bagreader:
     ----------------
     bagfile: `string`
         Bagreader constructor takes name of a bag file as an  argument. name of the bag file can be provided as the full qualified path, relative path or just the file name.
-    
-    delimiter: `string`
-        Used delimiter in writing the csv.
 
     verbose: `bool`
         If True, prints some relevant information. Default: `True`
@@ -153,12 +150,6 @@ class bagreader:
     --------------
     bagfile: `string`
         Full path of the bag  file, e.g `/home/ece446/2019-08-21-22-00-00.bag`
-
-    filename: `string`
-        Name of the bag file, e.g. `2019-08-21-22-00-00.bag`
-    
-    dir: `string`
-        Directory where bag file is located
     
     reader: `rosbag.Bag`
         rosbag.Bag object that 
@@ -189,19 +180,8 @@ class bagreader:
 
     '''
 
-    def __init__(self , bagfile , delimiter=",", verbose=True , tmp = False):
+    def __init__(self , bagfile , verbose=True , tmp = False):
         self.bagfile = bagfile
-        self.delimiter = delimiter
-        
-        slashindices = find(bagfile, '/')
-        
-        # length of slashindices list will be zero if a user has pass only bag file name , e.g. 2020-03-04-12-22-42.bag
-        if  len(slashindices) > 0:
-            self.filename =bagfile[slashindices[-1]:]
-            self.dir = bagfile[slashindices[0]:slashindices[-1]]
-        else:
-            self.filename = bagfile
-            self.dir = './'
 
         self.reader = rosbag.Bag(self.bagfile)
 
@@ -304,7 +284,7 @@ class bagreader:
             opencall = open(file_to_write, 'wb')
 
         with opencall as f:
-            writer = csv.writer(f, delimiter=self.delimiter)
+            writer = csv.writer(f)
             writer.writerow(cols) # write the header
             for i, m in enumerate(msgs):
                 slots = m.__slots__
@@ -386,7 +366,7 @@ class bagreader:
                 opencall = open(file_to_write, 'wb')
 
             with opencall as f:
-                writer = csv.writer(f, delimiter=self.delimiter)
+                writer = csv.writer(f)
                 writer.writerow(column_names) # write the header
                 for topic, msg, t in self.reader.read_messages(topics=topics_to_read[i], start_time=tstart, end_time=tend): 
                     #msg_list[k] = msg
@@ -469,7 +449,7 @@ class bagreader:
                 opencall = open(file_to_write, 'wb')
 
             with opencall as f:
-                writer = csv.writer(f, delimiter=self.delimiter)
+                writer = csv.writer(f)
                 writer.writerow(column_names) # write the header
                 for topic, msg, t in self.reader.read_messages(topics=topics_to_read[i], start_time=tstart, end_time=tend):
                     
@@ -490,7 +470,7 @@ class bagreader:
 
     def std_data(self, **kwargs):
         '''
-        Class method `std_data` extracts velocity data from the given file, assuming laser data is of type `std_msgs/{bool, byte, Float32, Float64, Int16, Int32, Int8, UInt16, UInt32, UInt64, UInt8}` of 1-dimension.
+        Class method `std_data` extracts all the std_msgs data from the given file, assuming laser data is of type `std_msgs/{bool, byte, Float32, Float64, Int16, Int32, Int8, UInt16, UInt32, UInt64, UInt8}` of 1-dimension.
 
         Parameters
         -------------
@@ -534,7 +514,7 @@ class bagreader:
                 opencall = open(file_to_write, 'wb')
 
             with opencall as f:
-                writer = csv.writer(f, delimiter=self.delimiter)
+                writer = csv.writer(f)
                 writer.writerow(column_names) # write the header
                 for topic, msg, t in self.reader.read_messages(topics=topics_to_read[i], start_time=tstart, end_time=tend):
                     
@@ -553,7 +533,7 @@ class bagreader:
 
     def odometry_data(self, **kwargs):
         '''
-        Class method `odometry_data` extracts velocity data from the given file, assuming laser data is of type `nav_msgs/Odometry`.
+        Class method `odometry_data` extracts odometry data from the given file, assuming laser data is of type `nav_msgs/Odometry`.
 
         Parameters
         -------------
@@ -610,7 +590,7 @@ class bagreader:
                 opencall = open(file_to_write, 'wb')
 
             with opencall as f:
-                writer = csv.writer(f, delimiter=self.delimiter)
+                writer = csv.writer(f)
                 writer.writerow(column_names) # write the header
                 for topic, msg, t in self.reader.read_messages(topics=topics_to_read[i], start_time=tstart, end_time=tend):
                     new_row = [t.secs + t.nsecs*1e-9, 
@@ -684,7 +664,7 @@ class bagreader:
                 opencall = open(file_to_write, 'wb')
 
             with opencall as f:
-                writer = csv.writer(f, delimiter=self.delimiter)
+                writer = csv.writer(f)
                 writer.writerow(column_names) # write the header
                 for topic, msg, t in self.reader.read_messages(topics=topics_to_read[i], start_time=tstart, end_time=tend):
                     
@@ -703,9 +683,9 @@ class bagreader:
             csvlist.append(file_to_write)
         return csvlist
 
-    def  clock_data(self, **kwargs):
+    def clock_data(self, **kwargs):
         '''
-        Class method `vel_data` extracts velocity data from the given file, assuming laser data is of type `rosgraph_msgs/Clock`.
+        Class method `vel_data` extracts clock data from the given file, assuming laser data is of type `rosgraph_msgs/Clock`.
 
         Parameters
         -------------
@@ -749,7 +729,7 @@ class bagreader:
                 opencall = open(file_to_write, 'wb')
 
             with opencall as f:
-                writer = csv.writer(f, delimiter=self.delimiter)
+                writer = csv.writer(f)
                 writer.writerow(column_names) # write the header
                 for topic, msg, t in self.reader.read_messages(topics=topics_to_read[i], start_time=tstart, end_time=tend):
                     new_row = [t.secs + t.nsecs*1e-9, 
@@ -1135,27 +1115,6 @@ def animate_timeseries(time, message, **kwargs):
             ax.set_ylabel('Message', fontsize=15)
             plt.draw()
             plt.pause(time[index + 1] - time[index])
-            
-
-def find(s, ch):
-    '''
-    Function `find` returns indices all the occurence of `ch` in `s` 
-
-    Parameters
-    -------------
-    s: `string`
-        String or a setence where to search for occurrences of the character `ch`
-
-    s: `char`
-        Character to look for
-
-    Returns
-    ---------
-    `list`
-        List of indices of occurrences of character `ch` in the string `s`.
-
-    '''
-    return [i for i, ltr in enumerate(s) if ltr == ch]
 
 def timeindex(df, inplace=False):
     '''
