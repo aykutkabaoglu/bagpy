@@ -334,7 +334,6 @@ class bagreader:
         type_to_look ="sensor_msgs/LaserScan"
         table_rows = self.topic_table[self.topic_table['Types']==type_to_look]
         topics_to_read = table_rows['Topics'].values
-        message_counts = table_rows['Message Count'].values
         
         column_names = ["Time",
                                 "header.seq", 
@@ -357,8 +356,9 @@ class bagreader:
         for i in range(len(table_rows)):
             tempfile = self.datafolder + "/" + topics_to_read[i].replace("/", "-") + ".csv"
             file_to_write = ntpath.dirname(tempfile) + '/' + ntpath.basename(tempfile)[1:]
-            #msg_list = [LaserScan() for count in range(message_counts[i])]
-            k = 0
+            if os.path.exists(file_to_write):
+                csvlist.append(file_to_write)
+                continue
 
             if sys.hexversion >= 0x3000000:
                 opencall = open(file_to_write, "w", newline='')
@@ -395,8 +395,6 @@ class bagreader:
                     new_row = new_row + intensities
                     writer.writerow(new_row)
                 
-                k = k + 1
-
             csvlist.append(file_to_write)
         return csvlist
 
@@ -427,7 +425,6 @@ class bagreader:
         type_to_look ="geometry_msgs/Twist"
         table_rows = self.topic_table[self.topic_table['Types']==type_to_look]
         topics_to_read = table_rows['Topics'].values
-        message_counts = table_rows['Message Count'].values
         
         column_names = ["Time",
                                 "linear.x", 
@@ -441,7 +438,9 @@ class bagreader:
         for i in range(len(table_rows)):
             tempfile = self.datafolder + "/" + topics_to_read[i].replace("/", "-") + ".csv"
             file_to_write = ntpath.dirname(tempfile) + '/' + ntpath.basename(tempfile)[1:]
-            k = 0
+            if os.path.exists(file_to_write):
+                csvlist.append(file_to_write)
+                continue
 
             if sys.hexversion >= 0x3000000:
                 opencall = open(file_to_write, "w", newline='')
@@ -462,8 +461,6 @@ class bagreader:
                                             msg.angular.z]
 
                     writer.writerow(new_row)
-                
-                k = k + 1
 
             csvlist.append(file_to_write)
         return csvlist
@@ -498,7 +495,6 @@ class bagreader:
 
         table_rows = self.topic_table[self.topic_table['Types'].isin(type_to_look)]
         topics_to_read = table_rows['Topics'].values
-        message_counts = table_rows['Message Count'].values
         
         column_names = ["Time", "data"]
 
@@ -506,7 +502,9 @@ class bagreader:
         for i in range(len(table_rows)):
             tempfile = self.datafolder + "/" + topics_to_read[i].replace("/", "-") + ".csv"
             file_to_write = ntpath.dirname(tempfile) + '/' + ntpath.basename(tempfile)[1:]
-            k = 0
+            if os.path.exists(file_to_write):
+                csvlist.append(file_to_write)
+                continue
 
             if sys.hexversion >= 0x3000000:
                 opencall = open(file_to_write, "w", newline='')
@@ -522,8 +520,6 @@ class bagreader:
                                             msg.data]
 
                     writer.writerow(new_row)
-                
-                k = k + 1
 
             csvlist.append(file_to_write)
         return csvlist
@@ -558,7 +554,6 @@ class bagreader:
         type_to_look ="nav_msgs/Odometry"
         table_rows = self.topic_table[self.topic_table['Types']==type_to_look]
         topics_to_read = table_rows['Topics'].values
-        message_counts = table_rows['Message Count'].values
         
         column_names = ["Time",
                                 "header.seq", 
@@ -582,8 +577,10 @@ class bagreader:
         for i in range(len(table_rows)):
             tempfile = self.datafolder + "/" + topics_to_read[i].replace("/", "-") + ".csv"
             file_to_write = ntpath.dirname(tempfile) + '/' + ntpath.basename(tempfile)[1:]
-            k = 0
-
+            if os.path.exists(file_to_write):
+                csvlist.append(file_to_write)
+                continue
+              
             if sys.hexversion >= 0x3000000:
                 opencall = open(file_to_write, "w", newline='')
             else:
@@ -609,8 +606,6 @@ class bagreader:
                                             msg.twist.twist.linear.z]
 
                     writer.writerow(new_row)
-                
-                k = k + 1
 
             csvlist.append(file_to_write)
         return csvlist
@@ -642,7 +637,6 @@ class bagreader:
         type_to_look ="geometry_msgs/Wrench"
         table_rows = self.topic_table[self.topic_table['Types']==type_to_look]
         topics_to_read = table_rows['Topics'].values
-        message_counts = table_rows['Message Count'].values
         
         column_names = ["Time",
                                 "force.x", 
@@ -656,7 +650,9 @@ class bagreader:
         for i in range(len(table_rows)):
             tempfile = self.datafolder + "/" + topics_to_read[i].replace("/", "-") + ".csv"
             file_to_write = ntpath.dirname(tempfile) + '/' + ntpath.basename(tempfile)[1:]
-            k = 0
+            if os.path.exists(file_to_write):
+                csvlist.append(file_to_write)
+                continue
 
             if sys.hexversion >= 0x3000000:
                 opencall = open(file_to_write, "w", newline='')
@@ -677,8 +673,6 @@ class bagreader:
                                             msg.torque.z]
 
                     writer.writerow(new_row)
-                
-                k = k + 1
 
             csvlist.append(file_to_write)
         return csvlist
@@ -710,7 +704,6 @@ class bagreader:
         type_to_look ="rosgraph_msgs/Clock"
         table_rows = self.topic_table[self.topic_table['Types']==type_to_look]
         topics_to_read = table_rows['Topics'].values
-        message_counts = table_rows['Message Count'].values
         
         column_names = ["Time",
                                 "clock.secs", 
@@ -720,8 +713,9 @@ class bagreader:
         for i in range(len(table_rows)):
             tempfile = self.datafolder + "/" + topics_to_read[i].replace("/", "-") + ".csv"
             file_to_write = ntpath.dirname(tempfile) + '/' + ntpath.basename(tempfile)[1:]
-
-            k = 0
+            if os.path.exists(file_to_write):
+                csvlist.append(file_to_write)
+                continue
 
             if sys.hexversion >= 0x3000000:
                 opencall = open(file_to_write, "w", newline='')
@@ -737,8 +731,6 @@ class bagreader:
                                             msg.clock.nsecs]
 
                     writer.writerow(new_row)
-                
-                k = k + 1
 
             csvlist.append(file_to_write)
         return csvlist
