@@ -53,6 +53,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sea
 import pickle
+import random
 
 from packaging import version
 
@@ -205,6 +206,8 @@ class bagreader:
 
         self.datafolder = bagfile[0:-4]
 
+        self.bag_df_dict = {}
+
         if tmp:
             self.datafolder = '/tmp/' + bagfile.split('/')[-1][0:-4]
 
@@ -222,7 +225,8 @@ class bagreader:
                 if self.verbose:
                     print("[INFO]  Successfully created the data folder {0}.".format(self.datafolder))
  
-    def message_by_topic(self, topic):
+
+    def message_by_topic(self, topic, tstart = None, tend = None):
         '''
         Class method `message_by_topic` to extract message from the ROS Bag by topic name `topic`
 
@@ -233,579 +237,57 @@ class bagreader:
             Topic from which to extract messages.
         Returns
         ---------
-        `str`
-            The name of the csv file to which data from the `topic` has been extracted
+        `dataframe`
+            pandas dataframe
 
         Example
         -----------
-        >>> b = bagreader('/home/ivory/CyverseData/ProjectSparkle/sparkle_n_1_update_rate_100.0_max_update_rate_100.0_time_step_0.01_logtime_30.0_2020-03-01-23-52-11.bag') 
+        >>> b = bagreader('bagfile.bag') 
         >>> msg_file = b.message_by_topic(topic='/catvehicle/vel')
 
         '''
 
-        msg_list = []
-        tstart =None
-        tend = None
-        time = []
+        if topic in self.bag_df_dict.keys():
+            return self.bag_df_dict.get(topic)
+          
+        data = []
         for topic, msg, t in self.reader.read_messages(topics=topic, start_time=tstart, end_time=tend): 
-            time.append(t)
-            msg_list.append(msg)
+            vals = []
+            cols = []
+            slots = msg.__slots__
+            for s in slots:
+                v, s = slotvalues(msg, s)
+                if isinstance(v, tuple):
+                    snew_array = [] 
+                    p = list(range(0, len(v)))
+                    snew_array = [s + "_" + str(pelem) for pelem in p]
+                    s = snew_array
 
-        msgs = msg_list
+                if isinstance(s, list):
+                    for i, s1 in enumerate(s):
+                        vals.append(v[i])
+                        cols.append(s1)
+                else:
+                    vals.append(v)
+                    cols.append(s)
+            data.append(vals)
 
-        if len(msgs) == 0:
-            print("No data on the topic:{}".format(topic))
-            return None
+        df = pd.DataFrame(data, columns=cols)
+        self.bag_df_dict[topic] = df
+        return df
 
-        # set column names from the slots
-        cols = ["Time"]
-        m0 = msgs[0]
-        slots = m0.__slots__
-        for s in slots:
-            v, s = slotvalues(m0, s)
-            if isinstance(v, tuple):
-                snew_array = [] 
-                p = list(range(0, len(v)))
-                snew_array = [s + "_" + str(pelem) for pelem in p]
-                s = snew_array
+    def get_same_type_of_topics(self, type_to_look=""):
+        table_rows = self.topic_table[self.topic_table['Types']==type_to_look]
+        topics_to_read = table_rows['Topics'].values
+        
+        for topic in topics_to_read:
+            self.bag_df_dict[topic] = self.message_by_topic(topic)
             
-            if isinstance(s, list):
-                for i, s1 in enumerate(s):
-                    cols.append(s1)
-            else:
-                cols.append(s)
-        
-        tempfile = self.datafolder + "/" + topic.replace("/", "-") + ".csv"
-        file_to_write = ntpath.dirname(tempfile) + '/' + ntpath.basename(tempfile)[1:]
+        return {k: self.bag_df_dict[k] for k in topics_to_read}
 
-        if sys.hexversion >= 0x3000000:
-            opencall = open(file_to_write, "w", newline='')
-        else:
-            opencall = open(file_to_write, 'wb')
-
-        with opencall as f:
-            writer = csv.writer(f)
-            writer.writerow(cols) # write the header
-            for i, m in enumerate(msgs):
-                slots = m.__slots__
-                vals = []
-                vals.append(time[i].secs + time[i].nsecs*1e-9)
-                for s in slots:
-                    v, s = slotvalues(m, s)
-                    if isinstance(v, tuple):
-                        snew_array = [] 
-                        p = list(range(0, len(v)))
-                        snew_array = [s + "_" + str(pelem) for pelem in p]
-                        s = snew_array
-
-                    if isinstance(s, list):
-                        for i, s1 in enumerate(s):
-                            vals.append(v[i])
-                    else:
-                        vals.append(v)
-                writer.writerow(vals)
-
-        return file_to_write
-
-    def laser_data(self, **kwargs):
+    def plot(self, msg_dict, save_fig = False):
         '''
-        Class method `laser_data` extracts laser data from the given file, assuming laser data is of type `sensor_msgs/LaserScan`.
-
-        Parameters
-        -------------
-        kwargs
-            variable keyword arguments
-
-        Returns
-        ---------
-        `list`
-            A list of strings. Each string will correspond to file path of CSV file that contains extracted data of laser scan type
-
-        Example
-        ----------
-        >>> b = bagreader('/home/ivory/CyverseData/ProjectSparkle/sparkle_n_1_update_rate_100.0_max_update_rate_100.0_time_step_0.01_logtime_30.0_2020-03-01-23-52-11.bag') 
-        >>> laserdatafile = b.laser_data()
-        >>> print(laserdatafile)
-
-        '''
-        tstart =None
-        tend = None
-        
-        type_to_look ="sensor_msgs/LaserScan"
-        table_rows = self.topic_table[self.topic_table['Types']==type_to_look]
-        topics_to_read = table_rows['Topics'].values
-        
-        column_names = ["Time",
-                                "header.seq", 
-                                "header.frame_id", 
-                                "angle_min" , 
-                                "angle_max", 
-                                "angle_increment", 
-                                "time_increment", 
-                                "scan_time", 
-                                "range_min", 
-                                "range_max"]
-
-        for p in range(0, 182):
-            column_names.append("ranges_" + str(p))
-        for p in range(0, 182):
-            column_names.append("intensities_" + str(p))
-
-        all_msg = []
-        csvlist = []
-        for i in range(len(table_rows)):
-            tempfile = self.datafolder + "/" + topics_to_read[i].replace("/", "-") + ".csv"
-            file_to_write = ntpath.dirname(tempfile) + '/' + ntpath.basename(tempfile)[1:]
-            if os.path.exists(file_to_write):
-                csvlist.append(file_to_write)
-                continue
-
-            if sys.hexversion >= 0x3000000:
-                opencall = open(file_to_write, "w", newline='')
-            else:
-                opencall = open(file_to_write, 'wb')
-
-            with opencall as f:
-                writer = csv.writer(f)
-                writer.writerow(column_names) # write the header
-                for topic, msg, t in self.reader.read_messages(topics=topics_to_read[i], start_time=tstart, end_time=tend): 
-                    #msg_list[k] = msg
-                    
-                    new_row = [t.secs + t.nsecs*1e-9, 
-                                            msg.header.seq, 
-                                            msg.header.frame_id, 
-                                            msg.angle_min,
-                                            msg.angle_max, 
-                                            msg.angle_increment, 
-                                            msg.time_increment, 
-                                            msg.scan_time,  
-                                            msg.range_min, 
-                                            msg.range_max]
-
-                    ranges = [None]*182
-                    intensities = [None]*182
-
-                    for ir, ran in enumerate(msg.ranges):
-                        ranges[ir] = ran
-
-                    for ir, ran in enumerate(msg.intensities):
-                        intensities[ir] = ran
-
-                    new_row  = new_row + ranges
-                    new_row = new_row + intensities
-                    writer.writerow(new_row)
-                
-            csvlist.append(file_to_write)
-        return csvlist
-
-    def vel_data(self, **kwargs):
-        '''
-        Class method `vel_data` extracts velocity data from the given file, assuming laser data is of type `geometry_msgs/Twist`.
-
-        Parameters
-        -------------
-        kwargs
-            variable keyword arguments
-
-        Returns
-        ---------
-        `list`
-            A list of strings. Each string will correspond to file path of CSV file that contains extracted data of geometry_msgs/Twist type
-
-        Example
-        ----------
-        >>> b = bagreader('/home/ivory/CyverseData/ProjectSparkle/sparkle_n_1_update_rate_100.0_max_update_rate_100.0_time_step_0.01_logtime_30.0_2020-03-01-23-52-11.bag') 
-        >>> veldatafile = b.vel_data()
-        >>> print(veldatafile)
-
-        '''
-        tstart = None
-        tend = None
-        
-        type_to_look ="geometry_msgs/Twist"
-        table_rows = self.topic_table[self.topic_table['Types']==type_to_look]
-        topics_to_read = table_rows['Topics'].values
-        
-        column_names = ["Time",
-                                "linear.x", 
-                                "linear.y", 
-                                "linear.z" , 
-                                "angular.x", 
-                                "angular.y", 
-                                "angular.z"]
-
-        csvlist = []
-        for i in range(len(table_rows)):
-            tempfile = self.datafolder + "/" + topics_to_read[i].replace("/", "-") + ".csv"
-            file_to_write = ntpath.dirname(tempfile) + '/' + ntpath.basename(tempfile)[1:]
-            if os.path.exists(file_to_write):
-                csvlist.append(file_to_write)
-                continue
-
-            if sys.hexversion >= 0x3000000:
-                opencall = open(file_to_write, "w", newline='')
-            else:
-                opencall = open(file_to_write, 'wb')
-
-            with opencall as f:
-                writer = csv.writer(f)
-                writer.writerow(column_names) # write the header
-                for topic, msg, t in self.reader.read_messages(topics=topics_to_read[i], start_time=tstart, end_time=tend):
-                    
-                    new_row = [t.secs + t.nsecs*1e-9, 
-                                            msg.linear.x, 
-                                            msg.linear.y,
-                                            msg.linear.z,
-                                            msg.angular.x,
-                                            msg.angular.y,
-                                            msg.angular.z]
-
-                    writer.writerow(new_row)
-
-            csvlist.append(file_to_write)
-        return csvlist
-
-    def std_data(self, **kwargs):
-        '''
-        Class method `std_data` extracts all the std_msgs data from the given file, assuming laser data is of type `std_msgs/{bool, byte, Float32, Float64, Int16, Int32, Int8, UInt16, UInt32, UInt64, UInt8}` of 1-dimension.
-
-        Parameters
-        -------------
-        kwargs
-            variable keyword arguments
-
-        Returns
-        ---------
-        `list`
-            A list of strings. Each string will correspond to file path of CSV file that contains extracted data of `std_msgs/{bool, byte, Float32, Float64, Int16, Int32, Int8, UInt16, UInt32, UInt64, UInt8}`
-
-        Example
-        ----------
-        >>> b = bagreader('/home/ivory/CyverseData/ProjectSparkle/sparkle_n_1_update_rate_100.0_max_update_rate_100.0_time_step_0.01_logtime_30.0_2020-03-01-23-52-11.bag') 
-        >>> stddatafile = b.std_data()
-        >>> print(stddatafile)
-
-        '''
-        tstart = None
-        tend = None
-        
-        type_to_look =["std_msgs/Bool", "'std_msgs/Byte", "std_msgs/Float32", "std_msgs/Float64",
-                                    "std_msgs/Int8", "std_msgs/Int16", "std_msgs/Int32",
-                                    "std_msgs/Uint8", "std_msgs/Uint16", "std_msgs/Uint32"]
-
-        table_rows = self.topic_table[self.topic_table['Types'].isin(type_to_look)]
-        topics_to_read = table_rows['Topics'].values
-        
-        column_names = ["Time", "data"]
-
-        csvlist = []
-        for i in range(len(table_rows)):
-            tempfile = self.datafolder + "/" + topics_to_read[i].replace("/", "-") + ".csv"
-            file_to_write = ntpath.dirname(tempfile) + '/' + ntpath.basename(tempfile)[1:]
-            if os.path.exists(file_to_write):
-                csvlist.append(file_to_write)
-                continue
-
-            if sys.hexversion >= 0x3000000:
-                opencall = open(file_to_write, "w", newline='')
-            else:
-                opencall = open(file_to_write, 'wb')
-
-            with opencall as f:
-                writer = csv.writer(f)
-                writer.writerow(column_names) # write the header
-                for topic, msg, t in self.reader.read_messages(topics=topics_to_read[i], start_time=tstart, end_time=tend):
-                    
-                    new_row = [t.secs + t.nsecs*1e-9, 
-                                            msg.data]
-
-                    writer.writerow(new_row)
-
-            csvlist.append(file_to_write)
-        return csvlist
-
-    def compressed_images(self, **kwargs):
-        raise NotImplementedError("To be implemented")
-
-    def odometry_data(self, **kwargs):
-        '''
-        Class method `odometry_data` extracts odometry data from the given file, assuming laser data is of type `nav_msgs/Odometry`.
-
-        Parameters
-        -------------
-        kwargs
-            variable keyword arguments
-
-        Returns
-        ---------
-        `list`
-            A list of strings. Each string will correspond to file path of CSV file that contains extracted data of nav_msgs/Odometry type
-
-        Example
-        ----------
-        >>> b = bagreader('/home/ivory/CyverseData/ProjectSparkle/sparkle_n_1_update_rate_100.0_max_update_rate_100.0_time_step_0.01_logtime_30.0_2020-03-01-23-52-11.bag') 
-        >>> odomdatafile = b.odometry_data()
-        >>> print(odomdatafile)
-
-        '''
-        tstart = None
-        tend = None
-        
-        type_to_look ="nav_msgs/Odometry"
-        table_rows = self.topic_table[self.topic_table['Types']==type_to_look]
-        topics_to_read = table_rows['Topics'].values
-        
-        column_names = ["Time",
-                                "header.seq", 
-                                "header.frame_id", 
-                                "child_frame_id",
-                                "pose.x" , 
-                                "pose.y", 
-                                "pose.z", 
-                                "orientation.x", 
-                                "orientation.y", 
-                                "orientation.z",
-                                "orientation.w",
-                                "linear.x",
-                                "linear.y",
-                                "linear.z",
-                                "angular.x",
-                                "angular.y",
-                                "angular.z"]
-
-        csvlist = []
-        for i in range(len(table_rows)):
-            tempfile = self.datafolder + "/" + topics_to_read[i].replace("/", "-") + ".csv"
-            file_to_write = ntpath.dirname(tempfile) + '/' + ntpath.basename(tempfile)[1:]
-            if os.path.exists(file_to_write):
-                csvlist.append(file_to_write)
-                continue
-              
-            if sys.hexversion >= 0x3000000:
-                opencall = open(file_to_write, "w", newline='')
-            else:
-                opencall = open(file_to_write, 'wb')
-
-            with opencall as f:
-                writer = csv.writer(f)
-                writer.writerow(column_names) # write the header
-                for topic, msg, t in self.reader.read_messages(topics=topics_to_read[i], start_time=tstart, end_time=tend):
-                    new_row = [t.secs + t.nsecs*1e-9, 
-                                            msg.header.seq, 
-                                            msg.header.frame_id,
-                                            msg.child_frame_id,
-                                            msg.pose.pose.position.x,
-                                            msg.pose.pose.position.y,
-                                            msg.pose.pose.position.z,
-                                            msg.pose.pose.orientation.x,
-                                            msg.pose.pose.orientation.y,
-                                            msg.pose.pose.orientation.z,
-                                            msg.pose.pose.orientation.w,
-                                            msg.twist.twist.linear.x,
-                                            msg.twist.twist.linear.y,
-                                            msg.twist.twist.linear.z]
-
-                    writer.writerow(new_row)
-
-            csvlist.append(file_to_write)
-        return csvlist
-
-    def wrench_data(self, **kwargs):
-        '''
-        Class method `wrench_data` extracts velocity data from the given file, assuming laser data is of type `geometry_msgs/Wrench`.
-
-        Parameters
-        -------------
-        kwargs
-            variable keyword arguments
-
-        Returns
-        ---------
-        `list`
-            A list of strings. Each string will correspond to file path of CSV file that contains extracted data of geometry_msgs/Wrench type
-
-        Example
-        ----------
-        >>> b = bagreader('/home/ivory/CyverseData/ProjectSparkle/sparkle_n_1_update_rate_100.0_max_update_rate_100.0_time_step_0.01_logtime_30.0_2020-03-01-23-52-11.bag') 
-        >>> wrenchdatafile = b.wrench_data()
-        >>> print(wrenchdatafile)
-
-        '''
-        tstart = None
-        tend = None
-        
-        type_to_look ="geometry_msgs/Wrench"
-        table_rows = self.topic_table[self.topic_table['Types']==type_to_look]
-        topics_to_read = table_rows['Topics'].values
-        
-        column_names = ["Time",
-                                "force.x", 
-                                "force.y", 
-                                "force.z" , 
-                                "torque.x", 
-                                "torque.y", 
-                                "torque.z"]
-
-        csvlist = []
-        for i in range(len(table_rows)):
-            tempfile = self.datafolder + "/" + topics_to_read[i].replace("/", "-") + ".csv"
-            file_to_write = ntpath.dirname(tempfile) + '/' + ntpath.basename(tempfile)[1:]
-            if os.path.exists(file_to_write):
-                csvlist.append(file_to_write)
-                continue
-
-            if sys.hexversion >= 0x3000000:
-                opencall = open(file_to_write, "w", newline='')
-            else:
-                opencall = open(file_to_write, 'wb')
-
-            with opencall as f:
-                writer = csv.writer(f)
-                writer.writerow(column_names) # write the header
-                for topic, msg, t in self.reader.read_messages(topics=topics_to_read[i], start_time=tstart, end_time=tend):
-                    
-                    new_row = [t.secs + t.nsecs*1e-9, 
-                                            msg.force.x, 
-                                            msg.force.y,
-                                            msg.force.z,
-                                            msg.torque.x,
-                                            msg.torque.y,
-                                            msg.torque.z]
-
-                    writer.writerow(new_row)
-
-            csvlist.append(file_to_write)
-        return csvlist
-
-    def clock_data(self, **kwargs):
-        '''
-        Class method `vel_data` extracts clock data from the given file, assuming laser data is of type `rosgraph_msgs/Clock`.
-
-        Parameters
-        -------------
-        kwargs
-            variable keyword arguments
-
-        Returns
-        ---------
-        `list`
-            A list of strings. Each string will correspond to file path of CSV file that contains extracted data of rosgraph_msgs/Clock type
-
-        Example
-        ----------
-        >>> b = bagreader('/home/ivory/CyverseData/ProjectSparkle/sparkle_n_1_update_rate_100.0_max_update_rate_100.0_time_step_0.01_logtime_30.0_2020-03-01-23-52-11.bag') 
-        >>> clockdatafile = b.clock_data()
-        >>> print(clockdatafile)
-
-        '''
-        tstart = None
-        tend = None
-        
-        type_to_look ="rosgraph_msgs/Clock"
-        table_rows = self.topic_table[self.topic_table['Types']==type_to_look]
-        topics_to_read = table_rows['Topics'].values
-        
-        column_names = ["Time",
-                                "clock.secs", 
-                                "clock.nsecs"]
-
-        csvlist = []
-        for i in range(len(table_rows)):
-            tempfile = self.datafolder + "/" + topics_to_read[i].replace("/", "-") + ".csv"
-            file_to_write = ntpath.dirname(tempfile) + '/' + ntpath.basename(tempfile)[1:]
-            if os.path.exists(file_to_write):
-                csvlist.append(file_to_write)
-                continue
-
-            if sys.hexversion >= 0x3000000:
-                opencall = open(file_to_write, "w", newline='')
-            else:
-                opencall = open(file_to_write, 'wb')
-
-            with opencall as f:
-                writer = csv.writer(f)
-                writer.writerow(column_names) # write the header
-                for topic, msg, t in self.reader.read_messages(topics=topics_to_read[i], start_time=tstart, end_time=tend):
-                    new_row = [t.secs + t.nsecs*1e-9, 
-                                            msg.clock.secs, 
-                                            msg.clock.nsecs]
-
-                    writer.writerow(new_row)
-
-            csvlist.append(file_to_write)
-        return csvlist
-
-    def pointcloud_data(self, **kwargs):
-        raise NotImplementedError("To be implemented")
-
-    def plot_vel(self, save_fig = False):
-        '''
-        `plot_vel` plots the timseries velocity data
-        
-        Parameters
-        -------------
-        save_fig: `bool`
-
-        If `True` figures are saved in the data directory.
-
-        '''
-        import IPython 
-        shell_type = IPython.get_ipython().__class__.__name__
-
-        if shell_type == 'ZMQInteractiveShell':
-            IPython.get_ipython().run_line_magic('matplotlib', 'inline')
-
-        csvfiles = self.vel_data()
-        
-        dataframes = [None]*len(csvfiles)
-
-        # read the csvfiles into pandas dataframe
-        for i, csv in enumerate(csvfiles):
-            df = pd.read_csv(csv)
-            dataframes[i] = df
-
-        fig, axs = create_fig(len(csvfiles))
-
-        for i, df in enumerate(dataframes):
-            axs[i].scatter(x = 'Time', y='linear.x', data=df, marker='D',  linewidth=0.3, s = 9, color="#2E7473")
-            axs[i].scatter(x = 'Time', y='linear.y', data=df, marker='s',  linewidth=0.3, s = 9, color="#EE5964")
-            axs[i].scatter(x = 'Time', y='linear.z', data=df, marker='p',  linewidth=0.3, s = 9, color="#ED9858")
-            axs[i].scatter(x = 'Time', y='angular.x', data=df, marker='P',  linewidth=0.3, s = 9, color="#1c54b2")
-            axs[i].scatter(x = 'Time', y='angular.y', data=df, marker='*',  linewidth=0.3, s = 9, color="#004F4A")
-            axs[i].scatter(x = 'Time', y='angular.z', data=df, marker='8',  linewidth=0.3, s = 9, color="#4F4A00")
-            axs[i].legend(df.columns.values[1:])
-
-            if shell_type in ['ZMQInteractiveShell', 'TerminalInteractiveShell']:
-                axs[i].set_title(ntpath.basename(csvfiles[i]), fontsize=16)
-                axs[i].set_xlabel('Time', fontsize=14)
-                axs[i].set_ylabel('Messages', fontsize=14)
-            else:
-                axs[i].set_title(ntpath.basename(csvfiles[i]), fontsize=12)
-                axs[i].set_xlabel('Time', fontsize=10)
-                axs[i].set_ylabel('Messages', fontsize=10)
-        fig.tight_layout()
-        suffix = ''
-        if len(self.datafolder) < 100:
-            suffix = '\n' + self.datafolder
-        if shell_type in ['ZMQInteractiveShell', 'TerminalInteractiveShell']:
-            fig.suptitle("Velocity Timeseries Plot"+suffix, fontsize = 14, y = 1.02)
-        else:
-             fig.suptitle("Velocity Timeseries Plot"+suffix, fontsize = 10, y = 1.02)
-
-        if save_fig:
-            current_fig = plt.gcf()
-            fileToSave = self.datafolder + "/" + _get_func_name()
-
-            with open(fileToSave + ".pickle", 'wb') as f:
-                pickle.dump(fig, f) 
-            current_fig.savefig(fileToSave + ".pdf", dpi = 100) 
-            current_fig.savefig(fileToSave + ".png", dpi = 100) 
-
-        plt.show()
-
-    def plot_std(self, save_fig = False):
-        '''
-        `plot_std` plots the timseries standard Messages such as  `std_msgs/{bool, byte, Float32, Float64, Int16, Int32, Int8, UInt16, UInt32, UInt64, UInt8}` of 1-dimension
+        `plot` plots the timseries given topic and its indexes
         
         Parameters
         -------------
@@ -819,108 +301,34 @@ class bagreader:
         if shell_type == 'ZMQInteractiveShell':
             IPython.get_ipython().run_line_magic('matplotlib', 'inline')
 
-        csvfiles = self.std_data()
-        
-        dataframes = [None]*len(csvfiles)
-
-        # read the csvfiles into pandas dataframe
-        for i, csv in enumerate(csvfiles):
-            df = pd.read_csv(csv)
-            dataframes[i] = df
-
-        fig, axs = create_fig(len(csvfiles))
-
-        if len(csvfiles) == 0:
-            print("No standard data found")
-            return
-
-        for i, df in enumerate(dataframes):
-            axs[i].scatter(x = 'Time', y='data', data=df, marker='D',  linewidth=0.3, s = 9, color="#2E7473")
-            axs[i].legend(df.columns.values[1:])
-            if shell_type in ['ZMQInteractiveShell', 'TerminalInteractiveShell']:
-                axs[i].set_title(ntpath.basename(csvfiles[i]), fontsize=16)
-                axs[i].set_xlabel('Time', fontsize=14)
-                axs[i].set_ylabel('Messages', fontsize=14)
-            else:
-                axs[i].set_title(ntpath.basename(csvfiles[i]), fontsize=12)
-                axs[i].set_xlabel('Time', fontsize=10)
-                axs[i].set_ylabel('Messages', fontsize=10)
-        suffix = ''
-        if len(self.datafolder) < 100:
-            suffix = '\n' + self.datafolder
-        if shell_type in ['ZMQInteractiveShell', 'TerminalInteractiveShell']:
-            fig.suptitle("Standard Messages Timeseries Plot"+suffix, fontsize = 14, y = 1.02)
-        else:
-             fig.suptitle("Standard Messages Timeseries Plot"+suffix, fontsize = 10, y = 1.02)
-        fig.tight_layout()
-        if save_fig:
-            current_fig = plt.gcf()
-            fileToSave = self.datafolder + "/" + _get_func_name()
-
-            with open(fileToSave + ".pickle", 'wb') as f:
-                pickle.dump(fig, f) 
-            current_fig.savefig(fileToSave + ".pdf", dpi = 300) 
-        
-        plt.show()
-
-    def plot_odometry(self, save_fig = False):
-        '''
-        `plot_odometry` plots the timseries odometry data
-        
-        Parameters
-        -------------
-        save_fig: `bool`
-
-        If `True` figures are saved in the data directory.
-        '''
-        import IPython 
-        shell_type = IPython.get_ipython().__class__.__name__
-
-        if shell_type == 'ZMQInteractiveShell':
-            IPython.get_ipython().run_line_magic('matplotlib', 'inline')
-
-        csvfiles = self.odometry_data()
-        
-        dataframes = [None]*len(csvfiles)
-
-        # read the csvfiles into pandas dataframe
-        for i, csv in enumerate(csvfiles):
-            df = pd.read_csv(csv)
-            dataframes[i] = df
-
-        fig, axs = create_fig(len(csvfiles))     
+        fig, axs = create_fig(1)     
       
-        for i, df in enumerate(dataframes):
-            axs[i].scatter(x = 'Time', y='pose.x', data=df, marker='D',  linewidth=0.3,s = 9, color="#2E7473")
-            axs[i].scatter(x = 'Time', y='pose.y', data=df, marker='D',  linewidth=0.3, s = 9, color="#EE5964")
-            axs[i].scatter(x = 'Time', y='pose.z', data=df, marker='D',  linewidth=0.3, s = 9, color="#ED9858")
-            axs[i].scatter(x = 'Time', y='orientation.x', data=df, marker='*',  linewidth=0.3, s = 9, color="#1c54b2")
-            axs[i].scatter(x = 'Time', y='orientation.y', data=df, marker='*',  linewidth=0.3, s = 9, color="#004F4A")
-            axs[i].scatter(x = 'Time', y='orientation.z', data=df, marker='8',  linewidth=0.3, s = 9, color="#4F4A00")
-            axs[i].scatter(x = 'Time', y='orientation.w', data=df, marker='8',  linewidth=0.3, s = 9, color="#004d40")
-            axs[i].scatter(x = 'Time', y='linear.x', data=df, marker='s',  linewidth=0.3, s = 9, color="#ba68c8")
-            axs[i].scatter(x = 'Time', y='linear.y', data=df, marker='s',  linewidth=0.3, s = 9, color="#2C0C32")
-            axs[i].scatter(x = 'Time', y='linear.z', data=df, marker='P',  linewidth=0.3, s = 9, color="#966851")
-            axs[i].scatter(x = 'Time', y='angular.x', data=df, marker='P', linewidth=0.3, s = 9, color="#517F96")
-            axs[i].scatter(x = 'Time', y='angular.y', data=df, marker='p', linewidth=0.3, s = 9, color="#B3C1FC")
-            axs[i].scatter(x = 'Time', y='angular.z', data=df, marker='p', linewidth=0.3, s = 9, color="#FCEFB3")
-            axs[i].legend(df.columns.values[4:])
-            if shell_type in ['ZMQInteractiveShell', 'TerminalInteractiveShell']:
-                axs[i].set_title(ntpath.basename(csvfiles[i]), fontsize=16)
-                axs[i].set_xlabel('Time', fontsize=14)
-                axs[i].set_ylabel('Messages', fontsize=14)
-            else:
-                axs[i].set_title(ntpath.basename(csvfiles[i]), fontsize=12)
-                axs[i].set_xlabel('Time', fontsize=10)
-                axs[i].set_ylabel('Messages', fontsize=10)
+        legend = []
+        for topic_name in msg_dict:
+            if topic_name not in self.bag_df_dict.keys():
+                self.message_by_topic(topic_name)
+            for i, msg_index in enumerate(msg_dict[topic_name]):
+                legend.append(msg_index)
+                axs[0].scatter(x = 'header.stamp.secs', y=msg_index, data=self.bag_df_dict[topic_name], marker=i,  linewidth=0.3,s = 9, color=str("#"+str(hex(random.randrange(2**20, 2**24)))[2::]))
+        
+        axs[0].legend(legend)
+        title = ' '.join([str(elem) for elem in list(msg_dict.keys())])
+        if shell_type in ['ZMQInteractiveShell', 'TerminalInteractiveShell']:
+            axs[0].set_title(ntpath.basename(title), fontsize=16)
+            axs[0].set_xlabel('Time', fontsize=14)
+            axs[0].set_ylabel('Messages', fontsize=14)
+        else:
+            axs[0].set_title(ntpath.basename(title), fontsize=12)
+            axs[0].set_xlabel('Time', fontsize=10)
+            axs[0].set_ylabel('Messages', fontsize=10)
 
         suffix = ''
         if len(self.datafolder) < 100:
             suffix = '\n' + self.datafolder
         if shell_type in ['ZMQInteractiveShell', 'TerminalInteractiveShell']:
-            fig.suptitle("Odometry Timeseries Plot"+suffix, fontsize = 14, y = 1.02)
+            fig.suptitle(suffix, fontsize = 14, y = 1.02)
         else:
-             fig.suptitle("Odometry Timeseries Plot"+suffix, fontsize = 10, y = 1.02)
+             fig.suptitle(suffix, fontsize = 10, y = 1.02)
         fig.tight_layout()
         if save_fig:
             current_fig = plt.gcf()
@@ -930,77 +338,12 @@ class bagreader:
                 pickle.dump(fig, f) 
             current_fig.savefig(fileToSave + ".pdf", dpi = 100) 
             current_fig.savefig(fileToSave + ".png", dpi = 100) 
-
-        plt.show()
-
-    def plot_wrench(self, save_fig = False):
-        '''
-        `plot_wrench` plots the timseries wrench data
-        
-        Parameters
-        -------------
-        save_fig: `bool`
-
-        If `True` figures are saved in the data directory.
-        '''
-
-        import IPython 
-        shell_type = IPython.get_ipython().__class__.__name__
-
-        if shell_type == 'ZMQInteractiveShell':
-            IPython.get_ipython().run_line_magic('matplotlib', 'inline')
-
-        csvfiles = self.wrench_data()
-        
-        dataframes = [None]*len(csvfiles)
-
-        # read the csvfiles into pandas dataframe
-        for i, csv in enumerate(csvfiles):
-            df = pd.read_csv(csv)
-            dataframes[i] = df
-
-        fig, axs = create_fig(len(csvfiles))
-
-        for i, df in enumerate(dataframes):
-            axs[i].scatter(x = 'Time', y='force.x', data=df, marker='D',  linewidth=0.3, s = 9, color="#2E7473")
-            axs[i].scatter(x = 'Time', y='force.y', data=df, marker='s',  linewidth=0.3, s = 9, color="#EE5964")
-            axs[i].scatter(x = 'Time', y='force.z', data=df, marker='*',  linewidth=0.3, s = 9, color="#ED9858")
-            axs[i].scatter(x = 'Time', y='torque.x', data=df, marker='P',  linewidth=0.3, s = 9, color="#1c54b2")
-            axs[i].scatter(x = 'Time', y='torque.y', data=df, marker='p',  linewidth=0.3, s = 9, color="#004F4A")
-            axs[i].scatter(x = 'Time', y='torque.z', data=df, marker='8',  linewidth=0.3, s = 9, color="#4F4A00")
-            axs[i].legend(df.columns.values[1:])
-            if shell_type in ['ZMQInteractiveShell', 'TerminalInteractiveShell']:
-                axs[i].set_title(ntpath.basename(csvfiles[i]), fontsize=16)
-                axs[i].set_xlabel('Time', fontsize=14)
-                axs[i].set_ylabel('Messages', fontsize=14)
-            else:
-                axs[i].set_title(ntpath.basename(csvfiles[i]), fontsize=12)
-                axs[i].set_xlabel('Time', fontsize=10)
-                axs[i].set_ylabel('Messages', fontsize=10)
-
-        suffix = ''
-        if len(self.datafolder) < 100:
-            suffix = '\n' + self.datafolder
-        if shell_type in ['ZMQInteractiveShell', 'TerminalInteractiveShell']:
-            fig.suptitle("Wrench Timeseries Plot"+suffix, fontsize = 14, y = 1.02)
-        else:
-             fig.suptitle("Wrench Timeseries Plot"+suffix, fontsize = 10, y = 1.02)
-        fig.tight_layout()
-        if save_fig:
-            current_fig = plt.gcf()
-            fileToSave = self.datafolder + "/" + _get_func_name()
-
-            with open(fileToSave + ".pickle", 'wb') as f:
-                pickle.dump(fig, f) 
-            current_fig.savefig(fileToSave + ".pdf", dpi = 300) 
 
         plt.show()
 
     def animate_laser(self):
         raise NotImplementedError("To be implemented")
 
-    def animate_pointcloud(self):
-        raise NotImplementedError("To be implemented")
 
 
 def slotvalues(m, slot):
