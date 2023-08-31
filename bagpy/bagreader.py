@@ -50,10 +50,8 @@ from sensor_msgs.msg import LaserScan
 
 import numpy  as np
 import pandas as pd
-import matplotlib.pyplot as plt
-import seaborn as sea
-import pickle
-import random
+from scipy.spatial.transform import Rotation
+import plotly.graph_objects as go
 
 from packaging import version
 
@@ -295,51 +293,29 @@ class bagreader:
 
         If `True` figures are saved in the data directory.
         '''
-        import IPython 
-        shell_type = IPython.get_ipython().__class__.__name__
-
-        if shell_type == 'ZMQInteractiveShell':
-            IPython.get_ipython().run_line_magic('matplotlib', 'inline')
-
-        fig, axs = create_fig(1)     
-      
+        fig = go.Figure()
+        marker_symbols = np.array(['circle', 'square', 'diamond', 'cross'])
         legend = []
         for topic_name in msg_dict:
             if topic_name not in self.bag_df_dict.keys():
                 self.message_by_topic(topic_name)
             for i, msg_index in enumerate(msg_dict[topic_name]):
                 legend.append(msg_index)
-                axs[0].scatter(x = 'header.stamp.secs', y=msg_index, data=self.bag_df_dict[topic_name], marker=i,  linewidth=0.3,s = 9, color=str("#"+str(hex(random.randrange(2**20, 2**24)))[2::]))
+                np.roll(marker_symbols,1)
+                fig.add_trace(go.Scatter(x = self.bag_df_dict[topic_name]['header.stamp.secs'], y = self.bag_df_dict[topic_name][msg_index], 
+                                         mode = "lines+markers", name = str(topic_name+"/"+msg_index), line=dict(width=1), marker=dict(symbol=marker_symbols[0])))
         
-        axs[0].legend(legend)
+        # Customize the layout (optional)
         title = ' '.join([str(elem) for elem in list(msg_dict.keys())])
-        if shell_type in ['ZMQInteractiveShell', 'TerminalInteractiveShell']:
-            axs[0].set_title(ntpath.basename(title), fontsize=16)
-            axs[0].set_xlabel('Time', fontsize=14)
-            axs[0].set_ylabel('Messages', fontsize=14)
-        else:
-            axs[0].set_title(ntpath.basename(title), fontsize=12)
-            axs[0].set_xlabel('Time', fontsize=10)
-            axs[0].set_ylabel('Messages', fontsize=10)
-
-        suffix = ''
-        if len(self.datafolder) < 100:
-            suffix = '\n' + self.datafolder
-        if shell_type in ['ZMQInteractiveShell', 'TerminalInteractiveShell']:
-            fig.suptitle(suffix, fontsize = 14, y = 1.02)
-        else:
-             fig.suptitle(suffix, fontsize = 10, y = 1.02)
-        fig.tight_layout()
+        fig.update_layout(
+            title=title,
+            xaxis_title='Time',
+            yaxis_title='Message',
+        )
         if save_fig:
-            current_fig = plt.gcf()
-            fileToSave = self.datafolder + "/" + _get_func_name()
+            fig.write_image("plot.pdf")
 
-            with open(fileToSave + ".pickle", 'wb') as f:
-                pickle.dump(fig, f) 
-            current_fig.savefig(fileToSave + ".pdf", dpi = 100) 
-            current_fig.savefig(fileToSave + ".png", dpi = 100) 
-
-        plt.show()
+        fig.show()
 
     def animate_laser(self):
         raise NotImplementedError("To be implemented")

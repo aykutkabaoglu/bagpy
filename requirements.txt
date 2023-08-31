@@ -11,5 +11,5 @@ pytest
 pandas
 setuptools-scm
 importlib-resources
-matplotlib
-seaborn
+kaleido
+plotly
