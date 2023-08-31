@@ -27,18 +27,10 @@
 #   OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE
 #   OR OTHER DEALINGS IN THE SOFTWARE.
 
-__author__ = 'Rahul Bhadani'
-__email__  = 'rahulbhadani@email.arizona.edu'
+__author__ = 'Rahul Bhadani, Aykut Kabaoglu'
+__email__  = 'rahulbhadani@email.arizona.edu, aykutkabaoglu@gmail.com'
 __version__ = "0.0.0" # this is set to actual version later
 
-
-import sys
-import ntpath
-import os
-import time
-from io import BytesIO
-import csv
-import inspect
 
 import rosbag
 from std_msgs.msg import String, Header
@@ -132,7 +124,6 @@ check_for_latest_version()
 class bagreader:
     '''
     `bagreader` class provides API to read rosbag files in an effective easy manner with significant hassle.
-    This class is reimplementation of its MATLAB equivalent that can be found at https://github.com/jmscslgroup/ROSBagReader
 
     Parameters
     ----------------
@@ -202,27 +193,7 @@ class bagreader:
         self.start_time = self.reader.get_start_time()
         self.end_time = self.reader.get_end_time()
 
-        self.datafolder = bagfile[0:-4]
-
         self.bag_df_dict = {}
-
-        if tmp:
-            self.datafolder = '/tmp/' + bagfile.split('/')[-1][0:-4]
-
-        self.verbose = verbose
-
-        if os.path.exists(self.datafolder):
-            if self.verbose:
-                print("[INFO]  Data folder {0} already exists. Not creating.".format(self.datafolder))
-        else:
-            try:
-                os.mkdir(self.datafolder)
-            except OSError:
-                print("[ERROR] Failed to create the data folder {0}.".format(self.datafolder))
-            else:
-                if self.verbose:
-                    print("[INFO]  Successfully created the data folder {0}.".format(self.datafolder))
- 
 
     def message_by_topic(self, topic, tstart = None, tend = None):
         '''
@@ -342,100 +313,16 @@ def slotvalues(m, slot):
     except AttributeError:
         return vals, slot
         
-def _get_func_name():
-    return inspect.stack()[1][3]
-
-def animate_timeseries(time, message, **kwargs):
-    '''
-    `animate_timeseries` will animate a time series data. Time and Message pandas series are expected
-    
-    
-    Parameters
-    ----------
-    
-    time: `pandas.core.series.Series`
-        Time Vector in the form of Pandas Timeseries
-        
-    message: `pandas.core.series.Series`
-        Message Vector in the form of Pandas Timeseries
-        
-    
-    kwargs: variable keyword arguments
-            
-        title: `str`
-
-            Title of the plot. By Default, it is `Timeseries Plot`
-            
-    '''
-    
-    
-    import IPython 
-    shell_type = IPython.get_ipython().__class__.__name__
-    
-    
-    assert (len(time) == len(message)), ("Time and Message Vector must be of same length. Current Length of Time Vector: {0}, Current Length of Message Vector: {0}".format(len(time), len(message)))
-    
-    plot_title = 'Timeseries Plot'
-    try:
-        plot_title = kwargs["title"]
-    except KeyError as e:
-        pass
-
-    fig, ax = create_fig(1)
-    ax = ax[0]
-    plt.style.use('ggplot')
-    plt.rcParams['figure.figsize'] = [15, 10]
-    plt.rcParams['font.size'] = 16.0
-    plt.rcParams['legend.fontsize'] = 14.0
-    plt.rcParams['xtick.labelsize'] = 14.0
-    plt.rcParams['ytick.labelsize'] = 14.0
-    plt.rcParams['legend.markerscale']  = 2.0
-
-    if shell_type in ['ZMQInteractiveShell', 'TerminalInteractiveShell']:
-
-        if shell_type == 'ZMQInteractiveShell':
-            IPython.get_ipython().run_line_magic('matplotlib', 'inline')
-        
-        print('Warning: Animation is being executed in IPython/Jupyter Notebook. Animation may not be real-time.')
-        l, = ax.plot([np.min(time),np.max(time)],[np.min(message),np.max(message)], alpha=0.6, 
-                     marker='o', markersize=5, linewidth=0, markerfacecolor='#275E56')
-
-
-        def animate(i):
-
-            l.set_data(time[:i], message[:i])
-            ax.set_xlabel('Time', fontsize=15)
-            ax.set_ylabel('Message', fontsize=15)
-            ax.set_title(plot_title, fontsize=16)
-
-        for index in range(len(message)-1):
-            animate(index)
-            IPython.display.clear_output(wait=True)
-            display(fig)
-            plt.pause(time[index + 1] - time[index])
-
-    else:
-        for index in range(0, len(message)-1):
-            ax.clear()
-            if index < 500:
-                sea.lineplot(time[:index], message[:index],  linewidth=2.0, color="#275E56")
-            else:
-                sea.lineplot(time[index - 500:index], message[index - 500:index],  linewidth=2.0, color="#275E56")
-            ax.set_title(plot_title, fontsize=16)
-            ax.set_xlabel('Time', fontsize=15)
-            ax.set_ylabel('Message', fontsize=15)
-            plt.draw()
-            plt.pause(time[index + 1] - time[index])
-
 def timeindex(df, inplace=False):
     '''
-    Convert multi Dataframe of which on column must be 'Time'  to pandas-compatible timeseries where timestamp is used to replace indices
+    Convert multi Dataframe of which on column must be 'header.time.stamp'  to pandas-compatible timeseries where timestamp is used to replace indices
+    Cannot be used with default pyplot
 
     Parameters
     --------------
 
     df: `pandas.DataFrame`
-        A pandas dataframe with two columns with the column names "Time" and "Message"
+        A pandas dataframe with ROS header.stamp
 
     inplace: `bool`
         Modifies the actual dataframe, if true, otherwise doesn't.
@@ -443,7 +330,7 @@ def timeindex(df, inplace=False):
     Returns
     -----------
     `pandas.DataFrame`
-        Pandas compatible timeseries with a single column having column name "Message" where indices are timestamp in hum  an readable format.
+        Includes pandas compatible timeseries that is converted to human readeble format as 2020-01-01 10:00:00
     '''
     
     if inplace:
@@ -451,142 +338,12 @@ def timeindex(df, inplace=False):
     else:
         newdf =df.copy(deep = True)
 
-    newdf['Time'] = df['Time']
-    Time = pd.to_datetime(newdf['Time'], unit='s')
-    newdf['Clock'] = pd.DatetimeIndex(Time)
+    Time = pd.to_datetime(newdf['header.stamp.secs'], unit='s')
+    #newdf['header.stamp.secs'] = pd.DatetimeIndex(Time)
+    newdf['header.stamp.secs'] = pd.DatetimeIndex(Time).time # to obtain the time without date
     
     if inplace:
-        newdf.set_index('Clock', inplace=inplace)
+        newdf.set_index('header.stamp.secs', inplace=inplace)
     else:
-        newdf = newdf.set_index('Clock')
+        newdf = newdf.set_index('header.stamp.secs')
     return newdf
-
-def _setplots(**kwargs):
-    import IPython 
-    
-    shell_type = IPython.get_ipython().__class__.__name__
-
-    ncols = 1
-    nrows= 1
-    if kwargs.get('ncols'):
-        ncols = kwargs['ncols']
-
-    if kwargs.get('nrows'):
-        nrows = kwargs['nrows']
-
-    if shell_type in ['ZMQInteractiveShell', 'TerminalInteractiveShell']:
-
-        plt.style.use('default')
-        plt.rcParams['figure.figsize'] = [12*ncols, 6*nrows]
-        plt.rcParams['font.size'] = 22.0 + 3*(ncols-1)
-        plt.rcParams["font.family"] = "serif"
-        plt.rcParams["mathtext.fontset"] = "dejavuserif"
-        plt.rcParams['figure.facecolor'] = '#ffffff'
-        #plt.rcParams[ 'font.family'] = 'Roboto'
-        #plt.rcParams['font.weight'] = 'bold'
-        plt.rcParams['xtick.color'] = '#01071f'
-        plt.rcParams['xtick.minor.visible'] = True
-        plt.rcParams['ytick.minor.visible'] = True
-        plt.rcParams['xtick.labelsize'] = 16 + 2*(ncols-1)
-        plt.rcParams['ytick.labelsize'] = 16 + 2*(ncols-1)
-        plt.rcParams['ytick.color'] = '#01071f'
-        plt.rcParams['axes.labelcolor'] = '#000000'
-        plt.rcParams['text.color'] = '#000000'
-        plt.rcParams['axes.labelcolor'] = '#000000'
-        plt.rcParams['grid.color'] = '#f0f1f5'
-        plt.rcParams['axes.labelsize'] = 20+ 3*(ncols-1)
-        plt.rcParams['axes.titlesize'] = 25+ 3*(ncols-1)
-        #plt.rcParams['axes.labelweight'] = 'bold'
-        #plt.rcParams['axes.titleweight'] = 'bold'
-        plt.rcParams["figure.titlesize"] = 30.0 + 4*(ncols-1) 
-        #plt.rcParams["figure.titleweight"] = 'bold'
-
-        plt.rcParams['legend.markerscale']  = 2.0
-        plt.rcParams['legend.fontsize'] = 10.0 + 3*(ncols-1)
-        plt.rcParams["legend.framealpha"] = 0.5
-        
-    else:
-        plt.style.use('default')
-        plt.rcParams['figure.figsize'] = [18*ncols, 6*nrows]
-        plt.rcParams["font.family"] = "serif"
-        plt.rcParams["mathtext.fontset"] = "dejavuserif"
-        plt.rcParams['font.size'] = 12.0
-        plt.rcParams['figure.facecolor'] = '#ffffff'
-        #plt.rcParams[ 'font.family'] = 'Roboto'
-        #plt.rcParams['font.weight'] = 'bold'
-        plt.rcParams['xtick.color'] = '#01071f'
-        plt.rcParams['xtick.minor.visible'] = True
-        plt.rcParams['ytick.minor.visible'] = True
-        plt.rcParams['xtick.labelsize'] = 10
-        plt.rcParams['ytick.labelsize'] = 10
-        plt.rcParams['ytick.color'] = '#01071f'
-        plt.rcParams['axes.labelcolor'] = '#000000'
-        plt.rcParams['text.color'] = '#000000'
-        plt.rcParams['axes.labelcolor'] = '#000000'
-        plt.rcParams['grid.color'] = '#f0f1f5'
-        plt.rcParams['axes.labelsize'] = 10
-        plt.rcParams['axes.titlesize'] = 10
-        #plt.rcParams['axes.labelweight'] = 'bold'
-        #plt.rcParams['axes.titleweight'] = 'bold'
-        plt.rcParams["figure.titlesize"] = 24.0
-        #plt.rcParams["figure.titleweight"] = 'bold'
-        plt.rcParams['legend.markerscale']  = 1.0
-        plt.rcParams['legend.fontsize'] = 8.0
-        plt.rcParams["legend.framealpha"] = 0.5
-        
-
-def create_fig(num_of_subplots=1, **kwargs):
-
-    import IPython 
-    shell_type = IPython.get_ipython().__class__.__name__
-
-
-    nrows = num_of_subplots
-    ncols = 1
-    
-    if kwargs.get('ncols'):
-        ncols = kwargs['ncols']
-    
-    if kwargs.get('nrows'):
-        nrows = kwargs['nrows']
-    
-    _setplots(ncols=ncols, nrows=nrows)
-    fig, ax = plt.subplots(ncols=ncols, nrows=nrows)
-    
-
-    if nrows == 1 and ncols == 1:
-        ax_ = []
-        ax_.append(ax)
-        ax = ax_
-    else:
-        ax = ax.ravel()
-
-    if sys.hexversion >= 0x3000000:
-        for a in ax:
-            a.minorticks_on()
-            a.grid(which='major', linestyle='-', linewidth='0.25', color='dimgray')
-            a.grid(which='minor', linestyle=':', linewidth='0.25', color='dimgray')
-            a.patch.set_facecolor('#fafafa')
-            a.spines['bottom'].set_color('#161616')
-            a.spines['top'].set_color('#161616')
-            a.spines['right'].set_color('#161616')
-            a.spines['left'].set_color('#161616')
-    else:
-        for a in ax:
-            a.minorticks_on()
-            a.grid(True, which='both')
-            
-    fig.tight_layout(pad=0.3*nrows)
-    return fig, ax
-
-
-def set_colorbar(fig, ax, im, label):
-    from mpl_toolkits.axes_grid1.inset_locator import inset_axes
-    axins1 = inset_axes(ax,
-                width="50%",  # width = 50% of parent_bbox width
-                height="3%",  # height : 5%
-                loc='upper right')
-    cbr = fig.colorbar(im, ax=ax, cax=axins1, orientation="horizontal")
-    cbr.set_label(label, fontsize = 20)
-
-    return cbr
