@@ -211,9 +211,13 @@ class bagreader:
             return self.bag_df_dict.get(topic)
           
         data = []
+        time = []
         for topic, msg, t in self.reader.read_messages(topics=topic, start_time=tstart, end_time=tend): 
             vals = []
             cols = []
+            # get precise time from header.stamp
+            time.append(t.secs + t.nsecs*1e-9)
+            # divide message into name index
             slots = msg.__slots__
             for s in slots:
                 v, s = slotvalues(msg, s)
@@ -233,6 +237,8 @@ class bagreader:
             data.append(vals)
 
         df = pd.DataFrame(data, columns=cols)
+        # convert seconds to human readable date and time
+        df['Time'] = pd.to_datetime(time, unit='s')
         self.bag_df_dict[topic] = df
         return df
 
@@ -303,38 +309,3 @@ def slotvalues(m, slot):
         return varray, sarray
     except AttributeError:
         return vals, slot
-        
-def timeindex(df, inplace=False):
-    '''
-    Convert multi Dataframe of which on column must be 'header.time.stamp'  to pandas-compatible timeseries where timestamp is used to replace indices
-    Cannot be used with default pyplot
-
-    Parameters
-    --------------
-
-    df: `pandas.DataFrame`
-        A pandas dataframe with ROS header.stamp
-
-    inplace: `bool`
-        Modifies the actual dataframe, if true, otherwise doesn't.
-
-    Returns
-    -----------
-    `pandas.DataFrame`
-        Includes pandas compatible timeseries that is converted to human readeble format as 2020-01-01 10:00:00
-    '''
-    
-    if inplace:
-        newdf = df
-    else:
-        newdf =df.copy(deep = True)
-
-    Time = pd.to_datetime(newdf['header.stamp.secs'], unit='s')
-    #newdf['header.stamp.secs'] = pd.DatetimeIndex(Time)
-    newdf['header.stamp.secs'] = pd.DatetimeIndex(Time).time # to obtain the time without date
-    
-    if inplace:
-        newdf.set_index('header.stamp.secs', inplace=inplace)
-    else:
-        newdf = newdf.set_index('header.stamp.secs')
-    return newdf
