@@ -272,8 +272,8 @@ class bagreader:
                 self.message_by_topic(topic_name)
             for i, msg_index in enumerate(msg_dict[topic_name]):
                 legend.append(msg_index)
-                np.roll(marker_symbols,1)
-                fig.add_trace(go.Scatter(x = self.bag_df_dict[topic_name]['header.stamp.secs'], y = self.bag_df_dict[topic_name][msg_index], 
+                marker_symbols = np.roll(marker_symbols,1)
+                fig.add_trace(go.Scatter(x = self.bag_df_dict[topic_name]['Time'], y = self.bag_df_dict[topic_name][msg_index], 
                                          mode = "lines+markers", name = str(topic_name+"/"+msg_index), line=dict(width=1), marker=dict(symbol=marker_symbols[0])))
         
         # Customize the layout (optional)
