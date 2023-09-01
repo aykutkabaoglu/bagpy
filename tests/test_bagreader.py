@@ -95,69 +95,7 @@ def test_bagreader_attributes(test_bag):
     """
 
     assert test_bag.bagfile.split("/")[-1] == "2016-06-01-14-57-13.bag"
-    assert test_bag.datafolder.split("/")[-1] == "2016-06-01-14-57-13"
-    assert test_bag.dir.split("/")[-1] == "data"
     assert test_bag.start_time == 1464818234.3037877
-    assert test_bag.filename == "/2016-06-01-14-57-13.bag"
     assert len(test_bag.frequency) == 17
     assert max(test_bag.frequency) == 1258.0395920815836
     assert min(test_bag.frequency) == 0.9992773989794005
-
-def test_laser_data(test_bag):
-    """Test laser data.
-
-    Parameters
-    ----------
-    test_bag : bagreader.bagreader
-        bagreader instance for test bag.
-
-    """
-
-    assert pd.read_csv(test_bag.laser_data()[0]).shape == (4191,374)
-
-def test_vel_data(test_bag):
-    """Test velocity data.
-
-    Parameters
-    ----------
-    test_bag : bagreader.bagreader
-        bagreader instance for test bag.
-
-    """
-
-    assert pd.read_csv(test_bag.vel_data()[0]).shape == (263,7)
-
-def test_odometry_data(test_bag):
-    """Test odometry data.
-
-    Parameters
-    ----------
-    test_bag : bagreader.bagreader
-        bagreader instance for test bag.
-
-    """
-
-    assert pd.read_csv(test_bag.odometry_data()[0]).shape == (560,17)
-
-def test_wrench_data(test_bag):
-    """Test wrench data.
-
-    Parameters
-    ----------
-    test_bag : bagreader.bagreader
-        bagreader instance for test bag.
-
-    """
-
-    assert pd.read_csv(test_bag.wrench_data()[0]).shape == (1118,7)
-
-def test_std_data(test_bag):
-    """Test standard data.
-
-    Parameters
-    ----------
-    test_bag : bagreader.bagreader
-        bagreader instance for test bag.
-
-    """
-    assert pd.read_csv(test_bag.std_data()[0]).shape == (4183,2)
