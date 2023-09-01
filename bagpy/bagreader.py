@@ -130,12 +130,6 @@ class bagreader:
     bagfile: `string`
         Bagreader constructor takes name of a bag file as an  argument. name of the bag file can be provided as the full qualified path, relative path or just the file name.
 
-    verbose: `bool`
-        If True, prints some relevant information. Default: `True`
-    
-    tmp: `bool`
-        If True, creates directory in /tmp folder. Default: `False`
-
     Attributes
     --------------
     bagfile: `string`
@@ -152,9 +146,6 @@ class bagreader:
     
     message_types:`list`, `string`
         stores all the available message types
-    
-    datafolder: `string`
-        stores the path/folder where bag file is present - may be relative to the bag file or full-qualified path.
 
     topic_table: `pandas.DataFrame`
         A pandas DataFrame showing list of topics, their types, frequencies and message counts
@@ -170,7 +161,7 @@ class bagreader:
 
     '''
 
-    def __init__(self , bagfile , verbose=True , tmp = False):
+    def __init__(self , bagfile):
         self.bagfile = bagfile
 
         self.reader = rosbag.Bag(self.bagfile)
