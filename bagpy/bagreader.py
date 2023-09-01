@@ -239,6 +239,8 @@ class bagreader:
             data.append(vals)
 
         df = pd.DataFrame(data, columns=cols)
+        # add roll, pitch, yaw columns to dataframe when quaternion message found
+        df = self.quaternion_to_euler(df)
         # convert seconds to human readable date and time
         df['Time'] = pd.to_datetime(time, unit='s')
         # store newly generated dataframe
@@ -256,6 +258,27 @@ class bagreader:
             self.bag_df_dict[topic] = self.message_by_topic(topic)
             
         return {k: self.bag_df_dict[k] for k in topics_to_read}
+
+    def quaternion_to_euler(self, df):
+        '''
+        convert quaternions to euler if there is a quaternion type message
+        checks '.w' or 'w' pattern in the end of columns and adds 'Roll', 'Pitch', 'Yaw' columns to given dataframe
+        '''
+        quaternion_indices = ''
+        for column in df.columns:
+            if len(column) == 1 and column == 'w':
+                quaternion_indices = column
+                break
+            elif '.w' == column[-2::]:
+                quaternion_indices = column
+                break
+        if not quaternion_indices:
+            return df
+
+        orient_vec = [str(quaternion_indices[:-1]+'x'), str(quaternion_indices[:-1]+'y'), 
+                      str(quaternion_indices[:-1]+'z'), str(quaternion_indices[:-1]+'w')]
+        df['Roll'],df['Pitch'],df['Yaw'] = np.transpose(Rotation.from_quat(df[orient_vec]).as_euler("xyz",degrees=True))
+        return(df)
 
     def plot(self, msg_dict, save_fig = False):
         '''
