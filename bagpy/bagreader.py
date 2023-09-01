@@ -184,6 +184,7 @@ class bagreader:
         self.start_time = self.reader.get_start_time()
         self.end_time = self.reader.get_end_time()
 
+        # store all read topics' dataframe in a dictionary
         self.bag_df_dict = {}
 
     def message_by_topic(self, topic, tstart = None, tend = None):
@@ -207,6 +208,7 @@ class bagreader:
 
         '''
 
+        # do not read same topics multi time
         if topic in self.bag_df_dict.keys():
             return self.bag_df_dict.get(topic)
           
@@ -239,10 +241,14 @@ class bagreader:
         df = pd.DataFrame(data, columns=cols)
         # convert seconds to human readable date and time
         df['Time'] = pd.to_datetime(time, unit='s')
+        # store newly generated dataframe
         self.bag_df_dict[topic] = df
         return df
 
     def get_same_type_of_topics(self, type_to_look=""):
+        '''
+        collects the same type of topics and returns the selected dataframes dictionary
+        '''
         table_rows = self.topic_table[self.topic_table['Types']==type_to_look]
         topics_to_read = table_rows['Topics'].values
         
@@ -267,7 +273,7 @@ class bagreader:
         for topic_name in msg_dict:
             if topic_name not in self.bag_df_dict.keys():
                 self.message_by_topic(topic_name)
-            for i, msg_index in enumerate(msg_dict[topic_name]):
+            for msg_index in msg_dict[topic_name]:
                 legend.append(msg_index)
                 marker_symbols = np.roll(marker_symbols,1)
                 fig.add_trace(go.Scatter(x = self.bag_df_dict[topic_name]['Time'], y = self.bag_df_dict[topic_name][msg_index], 
