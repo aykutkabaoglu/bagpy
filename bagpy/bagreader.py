@@ -214,21 +214,16 @@ class bagreader:
           
         data = []
         time = []
+        cols = []
         for topic, msg, t in self.reader.read_messages(topics=topic, start_time=tstart, end_time=tend): 
             vals = []
-            cols = []
+            cols.clear()
             # get precise time from header.stamp
             time.append(t.secs + t.nsecs*1e-9)
             # divide message into name index
             slots = msg.__slots__
             for s in slots:
                 v, s = slotvalues(msg, s)
-                if isinstance(v, tuple):
-                    snew_array = [] 
-                    p = list(range(0, len(v)))
-                    snew_array = [s + "_" + str(pelem) for pelem in p]
-                    s = snew_array
-
                 if isinstance(s, list):
                     for i, s1 in enumerate(s):
                         vals.append(v[i])
@@ -314,10 +309,88 @@ class bagreader:
 
         fig.show()
 
-    def animate_laser(self):
-        raise NotImplementedError("To be implemented")
+    def plot_laserscan(self, laser_topic):
+        '''
+        `plot` plots the laserscan in polar coordinates
+        '''      
+        self.message_by_topic(topic=laser_topic)
+        fig = go.Figure()
+        steps = []
+        for index, row in self.bag_df_dict[laser_topic].iterrows():
+            angles = np.arange(row.angle_min, row.angle_max, row.angle_increment)
+            fig.add_trace(
+                go.Scatterpolargl(
+                    visible=False,
+                    r = row.ranges,
+                    theta = angles,
+                    thetaunit = 'radians',
+                    mode = "markers",
+                    marker = dict(size=3)
+                ))
+            #create and add slider
+            step = dict(
+                method="update",
+                args=[{"visible": [False] * len(self.bag_df_dict[laser_topic])},
+                      {"title": str(index)}], 
+                label = index
+            )
+            step["args"][0]["visible"][index] = True  # Toggle i'th trace to "visible"
+            steps.append(step)
 
+        fig.update_polars(radialaxis_range=[0,self.bag_df_dict[laser_topic].range_max[0]])
+        fig.data[0].visible = True
 
+        sliders = [dict(
+            currentvalue={"prefix": "Index"},
+            steps=steps
+        )]
+
+        fig.update_layout(
+            sliders=sliders,
+            autosize=True
+        )
+
+        fig.show()
+
+    def plot_pointcloud(self, pointcloud_topic):
+        '''
+        `plot` plots the laserscan in polar coordinates
+        '''      
+        self.message_by_topic(topic=pointcloud_topic)
+        fig = go.Figure()
+        steps = []
+        for index, row in self.bag_df_dict[pointcloud_topic].iterrows():
+            fig.add_trace(
+                go.Scatter3d(
+                    x = [point.x for point in row.points],
+                    y = [point.y for point in row.points],
+                    z = [point.z for point in row.points],
+                    visible=True,
+                    mode = "markers",
+                    marker = dict(size=3)
+                ))
+            # Create and add slider
+            step = dict(
+                method="update",
+                args=[{"visible": [False] * len(self.bag_df_dict[pointcloud_topic])},
+                      {"title": str(index)}], 
+            )
+            step["args"][0]["visible"][index] = True  # Toggle i'th trace to "visible"
+            steps.append(step)
+
+        fig.data[0].visible = True
+
+        sliders = [dict(
+            currentvalue={"prefix": "Index"},
+            steps=steps
+        )]
+
+        fig.update_layout(
+            sliders=sliders,
+            autosize=True
+        )
+
+        fig.show()
 
 def slotvalues(m, slot):
     vals = getattr(m, slot)
