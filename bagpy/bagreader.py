@@ -45,9 +45,16 @@ import pandas as pd
 from scipy.spatial.transform import Rotation
 import plotly.graph_objects as go
 
+import dash
+from dash import dcc, html
+from dash.dependencies import Input, Output, State
+from dash.exceptions import PreventUpdate
+
 from packaging import version
 
 from pathlib import Path
+import copy
+
 version_src = ''
 
 try:
@@ -186,6 +193,10 @@ class bagreader:
 
         # store all read topics' dataframe in a dictionary
         self.bag_df_dict = {}
+        self.app = dash.Dash(__name__)
+
+    def is_topic_found():
+        assert NotImplementedError
 
     def message_by_topic(self, topic, tstart = None, tend = None):
         '''
@@ -277,7 +288,7 @@ class bagreader:
 
     def plot(self, msg_dict, save_fig = False):
         '''
-        `plot` plots the timseries given topic and its indexes
+        plots the timseries given topic and its indexes
         
         Parameters
         -------------
@@ -309,88 +320,124 @@ class bagreader:
 
         fig.show()
 
+    def run_server(self):
+        self.app.run_server(debug=False)
+        
+    def app_properties(self, fig, msg_size):
+        '''
+        layout properties of the dash
+        '''
+        self.app.layout = html.Div([
+        dcc.Graph(id='scatter-plot', figure=fig),
+        dcc.Slider(
+              id='slider',
+              min=1,
+              max=msg_size,
+              step=1,
+              value=1,
+              tooltip={"placement": "bottom", "always_visible": True},
+              marks={i: str(i) for i in range(0, msg_size, msg_size//10)},
+              updatemode='drag',
+          )
+        ])
+
     def plot_laserscan(self, laser_topic):
         '''
-        `plot` plots the laserscan in polar coordinates
+        plots the laserscan in polar coordinates
         '''      
         self.message_by_topic(topic=laser_topic)
+        
         fig = go.Figure()
-        steps = []
-        for index, row in self.bag_df_dict[laser_topic].iterrows():
+        fig.update_polars(radialaxis_range=[0,self.bag_df_dict[laser_topic].range_max[0]])
+        fig.layout['title'] = laser_topic
+
+        self.app_properties(fig, len(self.bag_df_dict[laser_topic]))
+      
+        @self.app.callback(
+        Output('scatter-plot', 'figure'),
+        [Input('slider', 'value')],
+        [State('scatter-plot', 'relayoutData')]
+        )
+        def update_figure(selected_value, relayout_data):
+            '''
+            slider callback: updates figure whenever slider is moved and keeps the zoom value
+            '''
+            row = self.bag_df_dict[laser_topic].loc[selected_value]
+            new_figure = copy.deepcopy(fig)
+            new_figure.data = []
             angles = np.arange(row.angle_min, row.angle_max, row.angle_increment)
-            fig.add_trace(
+            new_figure.add_trace(
                 go.Scatterpolargl(
-                    visible=False,
                     r = row.ranges,
                     theta = angles,
                     thetaunit = 'radians',
                     mode = "markers",
-                    marker = dict(size=3)
+                    marker = dict(size=2)
                 ))
-            #create and add slider
-            step = dict(
-                method="update",
-                args=[{"visible": [False] * len(self.bag_df_dict[laser_topic])},
-                      {"title": str(index)}], 
-                label = index
-            )
-            step["args"][0]["visible"][index] = True  # Toggle i'th trace to "visible"
-            steps.append(step)
-
-        fig.update_polars(radialaxis_range=[0,self.bag_df_dict[laser_topic].range_max[0]])
-        fig.data[0].visible = True
-
-        sliders = [dict(
-            currentvalue={"prefix": "Index"},
-            steps=steps
-        )]
-
-        fig.update_layout(
-            sliders=sliders,
-            autosize=True
-        )
-
-        fig.show()
+            if relayout_data and 'polar.radialaxis.range' in relayout_data:
+                new_figure['layout.polar.radialaxis.range'] = relayout_data['polar.radialaxis.range']
+            return new_figure
+          
+        update_figure(0, fig['layout'])
+        self.run_server()
 
     def plot_pointcloud(self, pointcloud_topic):
         '''
-        `plot` plots the laserscan in polar coordinates
+        plots the pointcloud in cartesian coordinates
         '''      
         self.message_by_topic(topic=pointcloud_topic)
+        
+        # declare axis range before plotting the data. causes additional iteration but provides static and easy visualization
+        min_x, min_y, min_z, max_x, max_y, max_z = 10000, 10000, 10000, 0, 0, 0
+        for points in self.bag_df_dict[pointcloud_topic].points:
+            x_values = [point.x for point in points]
+            y_values = [point.y for point in points]
+            z_values = [point.z for point in points]
+            min_x, max_x = min(min(x_values), min_x), max(max(x_values), max_x)
+            min_y, max_y = min(min(y_values), min_y), max(max(y_values), max_y)
+            min_z, max_z = min(min(z_values), min_z), max(max(z_values), max_z)
+            
         fig = go.Figure()
-        steps = []
-        for index, row in self.bag_df_dict[pointcloud_topic].iterrows():
-            fig.add_trace(
+        fig.layout['title'] = pointcloud_topic
+        
+        self.app_properties(fig, len(self.bag_df_dict[pointcloud_topic]))
+      
+        @self.app.callback(
+        Output('scatter-plot', 'figure'),
+        Input('slider', 'value'),
+        State('scatter-plot', 'relayoutData')
+        )
+        def update_figure(selected_value, relayout_data):
+            '''
+            slider callback: updates figure whenever slider is moved and keeps the zoom value
+            '''
+            row = self.bag_df_dict[pointcloud_topic].loc[selected_value]
+            new_figure = copy.deepcopy(fig)
+            new_figure.data = []
+            new_figure.add_trace(
                 go.Scatter3d(
                     x = [point.x for point in row.points],
                     y = [point.y for point in row.points],
                     z = [point.z for point in row.points],
-                    visible=True,
                     mode = "markers",
-                    marker = dict(size=3)
+                    marker = dict(size=2)
                 ))
-            # Create and add slider
-            step = dict(
-                method="update",
-                args=[{"visible": [False] * len(self.bag_df_dict[pointcloud_topic])},
-                      {"title": str(index)}], 
-            )
-            step["args"][0]["visible"][index] = True  # Toggle i'th trace to "visible"
-            steps.append(step)
 
-        fig.data[0].visible = True
-
-        sliders = [dict(
-            currentvalue={"prefix": "Index"},
-            steps=steps
-        )]
-
-        fig.update_layout(
-            sliders=sliders,
-            autosize=True
-        )
-
-        fig.show()
+            if relayout_data:
+                new_figure['layout'] = relayout_data
+                
+            new_figure.update_layout(scene=dict(
+                aspectmode='manual',
+                aspectratio={'x':abs(max_x-min_x), 'y':abs(max_y-min_y), 'z':abs(max_z-min_z)},
+                xaxis = dict(range=[min_x, max_x], ticks='outside', tickwidth=5, tickcolor='red'),
+                yaxis = dict(range=[min_y, max_y], ticks='outside', tickwidth=5, tickcolor='green'),
+                zaxis = dict(range=[min_z, max_z], ticks='outside', tickwidth=5, tickcolor='blue'),
+            ))
+                
+            return new_figure
+          
+        update_figure(0, fig['layout'])
+        self.run_server()
 
 def slotvalues(m, slot):
     vals = getattr(m, slot)

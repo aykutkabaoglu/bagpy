@@ -13,3 +13,4 @@ setuptools-scm
 importlib-resources
 kaleido
 plotly
+dash
