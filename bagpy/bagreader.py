@@ -395,7 +395,9 @@ class bagreader:
                     theta = angles,
                     thetaunit = 'radians',
                     mode = "markers",
-                    marker = dict(size=2)
+                    marker = dict(size=2),
+                    name = 'Timestamp:' + str(row.Time),
+                    showlegend = True
                 ))
             if relayout_data and 'polar.radialaxis.range' in relayout_data:
                 new_figure['layout.polar.radialaxis.range'] = relayout_data['polar.radialaxis.range']
@@ -452,7 +454,9 @@ class bagreader:
                     y = [point.y for point in row.points],
                     z = [point.z for point in row.points],
                     mode = "markers",
-                    marker = dict(size=2)
+                    marker = dict(size=2),
+                    name = 'Timestamp:' + str(row.Time),
+                    showlegend = True
                 ))
 
             if relayout_data:
