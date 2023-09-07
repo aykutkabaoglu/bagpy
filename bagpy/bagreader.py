@@ -188,19 +188,19 @@ class bagreader:
 
         self.topic_table = pd.DataFrame(list(zip(self.topics, self.message_types, self.n_messages, self.frequency)), columns=['Topics', 'Types', 'Message Count', 'Frequency'])
 
-        self.start_time = self.reader.get_start_time()
-        self.end_time = self.reader.get_end_time()
-
         # store all read topics' dataframe in a dictionary
         self.bag_df_dict = {}
         self.app = dash.Dash(__name__)
 
-    def is_topic_found():
-        assert NotImplementedError
+    def is_topic_found(self, topic_name):
+        return bool(self.topic_table[self.topic_table['Topics'] == topic_name].index.array)
 
-    def message_by_topic(self, topic, tstart = None, tend = None):
+    def is_topic_type_valid(self, topic_name, topic_type):
+        return bool((self.topic_table[self.topic_table['Topics'] == topic_name].Types.array == topic_type)[0])
+
+    def update_topic_dataframe(self, topic):
         '''
-        Class method `message_by_topic` to extract message from the ROS Bag by topic name `topic`
+        Class method `update_topic_dataframe` to extract message from the ROS Bag by topic name `topic` and stores it in the class's dataframe
 
         Parameters
         ---------------
@@ -209,61 +209,75 @@ class bagreader:
             Topic from which to extract messages.
         Returns
         ---------
-        `dataframe`
+        `bool`
             pandas dataframe
 
         Example
         -----------
         >>> b = bagreader('bagfile.bag') 
-        >>> msg_file = b.message_by_topic(topic='/catvehicle/vel')
-
+        >>> msg_file = b.update_topic_dataframe(topic='/catvehicle/vel')
         '''
-
-        # do not read same topics multi time
+        # do not read same topics multiple time
         if topic in self.bag_df_dict.keys():
-            return self.bag_df_dict.get(topic)
+            return True
+        if not self.is_topic_found(topic):
+            print(topic, "is an invalid name, check topic_table")
+            return False
           
-        data = []
-        time = []
-        cols = []
-        for topic, msg, t in self.reader.read_messages(topics=topic, start_time=tstart, end_time=tend): 
-            vals = []
-            cols.clear()
-            # get precise time from header.stamp
-            time.append(t.secs + t.nsecs*1e-9)
-            # divide message into name index
-            slots = msg.__slots__
-            for s in slots:
-                v, s = slotvalues(msg, s)
-                if isinstance(s, list):
-                    for i, s1 in enumerate(s):
-                        vals.append(v[i])
-                        cols.append(s1)
-                else:
-                    vals.append(v)
-                    cols.append(s)
-            data.append(vals)
+        try:
+            data = []
+            time = []
+            cols = []
+            for topic, msg, t in self.reader.read_messages(topics=topic, start_time=None, end_time=None): 
+                vals = []
+                cols.clear()
+                # get precise time from header.stamp
+                time.append(t.secs + t.nsecs*1e-9)
+                # divide message into name index
+                slots = msg.__slots__
+                for s in slots:
+                    v, s = slotvalues(msg, s)
+                    if isinstance(s, list):
+                        for i, s1 in enumerate(s):
+                            vals.append(v[i])
+                            cols.append(s1)
+                    else:
+                        vals.append(v)
+                        cols.append(s)
+                data.append(vals)
 
-        df = pd.DataFrame(data, columns=cols)
-        # add roll, pitch, yaw columns to dataframe when quaternion message found
-        df = self.quaternion_to_euler(df)
-        # convert seconds to human readable date and time
-        df['Time'] = pd.to_datetime(time, unit='s')
-        # store newly generated dataframe
-        self.bag_df_dict[topic] = df
-        return df
+            df = pd.DataFrame(data, columns=cols)
+            # add roll, pitch, yaw columns to dataframe when quaternion message found
+            df = self.quaternion_to_euler(df)
+            # convert seconds to human readable date and time
+            df['Time'] = pd.to_datetime(time, unit='s')
+            # store newly generated dataframe
+            self.bag_df_dict[topic] = df
+            return True
+        except:
+            print("Unknown error")
+            return False
+
+    def get_message_by_topic(self, topics):
+        '''
+        gets single topic name as a string or list of topic names and returns single dataframe or dataframe dictionary that it's keys are topic names
+        '''
+        if type(topics) is list:
+            for topic in topics:
+               if not self.update_topic_dataframe(topic):
+                  return
+            return {k: self.bag_df_dict[k] for k in topics}
+        elif self.update_topic_dataframe(topics):
+            return self.bag_df_dict[topics]
 
     def get_same_type_of_topics(self, type_to_look=""):
         '''
-        collects the same type of topics and returns the selected dataframes dictionary
+        collects the same type of topics and returns the list of topic names
         '''
         table_rows = self.topic_table[self.topic_table['Types']==type_to_look]
         topics_to_read = table_rows['Topics'].values
         
-        for topic in topics_to_read:
-            self.bag_df_dict[topic] = self.message_by_topic(topic)
-            
-        return {k: self.bag_df_dict[k] for k in topics_to_read}
+        return topics_to_read
 
     def quaternion_to_euler(self, df):
         '''
@@ -300,8 +314,8 @@ class bagreader:
         marker_symbols = np.array(['circle', 'square', 'diamond', 'cross'])
         legend = []
         for topic_name in msg_dict:
-            if topic_name not in self.bag_df_dict.keys():
-                self.message_by_topic(topic_name)
+            if not self.update_topic_dataframe(topic_name):
+                return
             for msg_index in msg_dict[topic_name]:
                 legend.append(msg_index)
                 marker_symbols = np.roll(marker_symbols,1)
@@ -341,11 +355,20 @@ class bagreader:
           )
         ])
 
-    def plot_laserscan(self, laser_topic):
+    def plot_laserscan(self, laser_topic=''):
         '''
         plots the laserscan in polar coordinates
-        '''      
-        self.message_by_topic(topic=laser_topic)
+        '''
+        if laser_topic and (not self.update_topic_dataframe(topic=laser_topic) or not self.is_topic_type_valid(laser_topic, 'sensor_msgs/LaserScan')):
+            return
+        else:
+            topic_list = self.get_same_type_of_topics("sensor_msgs/LaserScan")
+            if topic_list:
+                laser_topic = topic_list[0]
+                self.update_topic_dataframe(topic=laser_topic)
+            else:
+                print("There is no LaserScan message")
+                return
         
         fig = go.Figure()
         fig.update_polars(radialaxis_range=[0,self.bag_df_dict[laser_topic].range_max[0]])
@@ -381,11 +404,20 @@ class bagreader:
         update_figure(0, fig['layout'])
         self.run_server()
 
-    def plot_pointcloud(self, pointcloud_topic):
+    def plot_pointcloud(self, pointcloud_topic=''):
         '''
         plots the pointcloud in cartesian coordinates
         '''      
-        self.message_by_topic(topic=pointcloud_topic)
+        if pointcloud_topic and (not self.update_topic_dataframe(topic=pointcloud_topic) or not self.is_topic_type_valid(pointcloud_topic, 'sensor_msgs/PointCloud')):
+            return
+        else:
+            topic_list = self.get_same_type_of_topics("sensor_msgs/PointCloud")
+            if topic_list:
+                pointcloud_topic = topic_list[0]
+                self.update_topic_dataframe(topic=pointcloud_topic)
+            else:
+                print("There is no PointCloud message")
+                return
         
         # declare axis range before plotting the data. causes additional iteration but provides static and easy visualization
         min_x, min_y, min_z, max_x, max_y, max_z = 10000, 10000, 10000, 0, 0, 0
