@@ -38,6 +38,7 @@ from geometry_msgs.msg  import Twist, Pose, PoseStamped
 from nav_msgs.msg import Path, Odometry
 from geometry_msgs.msg import Point, Twist
 from sensor_msgs.msg import LaserScan
+from diagnostic_msgs.msg import DiagnosticArray
 
 
 import numpy  as np
@@ -474,6 +475,66 @@ class bagreader:
           
         update_figure(0, fig['layout'])
         self.run_server()
+        
+        
+    def plot_diagnostics(self, topic_name="/diagnostics", annotate_names=False):
+        if topic_name and (not self.update_topic_dataframe(topic=topic_name) or not self.is_topic_type_valid(topic_name, 'diagnostic_msgs/DiagnosticArray')):
+            return
+        
+        def keys_to_text(values):
+            text_list = []
+            for keys in values:
+                text_list.append([f'{value}<br>' for value in keys])
+            return text_list
+        
+        fig = go.Figure()
+        fig.layout['title'] = topic_name
+        
+        # OK=0
+        # WARN=1
+        # ERROR=2
+        # STALE=3
+        levels = ['OK', 'WARN', 'ERROR', 'STALE']
+        df_list = [pd.DataFrame(columns=['Time','name','message','hardware_id','values'])] * 4
+        marker_symbols = np.array(['circle', 'square', 'diamond', 'cross'])
+        
+        for index, row in self.bag_df_dict[topic_name].iterrows():
+            for state in row.status:
+                df_list[state.level] = df_list[state.level].append({'Time': row.Time, 'name': state.name, 'message': state.message, 'hardware_id': state.hardware_id, 'values': state.values}, ignore_index=True)
+
+        for i in range(len(df_list)):
+            hover_text = [
+                f'{name}<br> {message}<br> {values}'
+                for name, message, values in zip(df_list[i]['name'], df_list[i]['message'], keys_to_text(df_list[i]['values']))
+            ]
+            fig.add_trace(go.Scatter(x = df_list[i]['Time'], y = [-1*i]*len(df_list[i]), 
+                                  mode = "lines+markers", name = levels[i], line = dict(width=1), marker = dict(symbol=marker_symbols[0]),
+                                  hovertext = hover_text))
+
+            # annotate name of the each message (it is resource consuming but go.Scatter do not provide better option)
+            if annotate_names:
+                for x_val, text in zip(df_list[i]['Time'], df_list[i]['name']):
+                    fig.add_annotation(
+                      go.layout.Annotation(
+                          x=x_val,
+                          y=-1*i,
+                          text=text,
+                          showarrow=False,
+                          font=dict(size=10),
+                          xref='x',
+                          yref='y',
+                          textangle=90,  # Rotate the text by 90 degrees
+                      )
+                    )
+
+        # Customize the layout (optional)
+        fig.update_layout(
+            title='diagnostics',
+            xaxis_title='Time',
+            yaxis_title='Message',
+        )
+        
+        fig.show()
 
 def slotvalues(m, slot):
     vals = getattr(m, slot)
