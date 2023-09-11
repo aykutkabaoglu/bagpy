@@ -477,7 +477,7 @@ class bagreader:
         self.run_server()
         
         
-    def plot_diagnostics(self, topic_name="/diagnostics", annotate_names=False):
+    def plot_diagnostics(self, topic_name="/diagnostics", name_filter=[], annotate_names=False):
         if topic_name and (not self.update_topic_dataframe(topic=topic_name) or not self.is_topic_type_valid(topic_name, 'diagnostic_msgs/DiagnosticArray')):
             return
         
@@ -498,9 +498,10 @@ class bagreader:
         df_list = [pd.DataFrame(columns=['Time','name','message','hardware_id','values'])] * 4
         marker_symbols = np.array(['circle', 'square', 'diamond', 'cross'])
         
-        for index, row in self.bag_df_dict[topic_name].iterrows():
+        for _, row in self.bag_df_dict[topic_name].iterrows():
             for state in row.status:
-                df_list[state.level] = df_list[state.level].append({'Time': row.Time, 'name': state.name, 'message': state.message, 'hardware_id': state.hardware_id, 'values': state.values}, ignore_index=True)
+                if not name_filter or [name for name in name_filter if name in state.name]:
+                    df_list[state.level] = df_list[state.level].append({'Time': row.Time, 'name': state.name, 'message': state.message, 'hardware_id': state.hardware_id, 'values': state.values}, ignore_index=True)
 
         for i in range(len(df_list)):
             hover_text = [
@@ -508,7 +509,7 @@ class bagreader:
                 for name, message, values in zip(df_list[i]['name'], df_list[i]['message'], keys_to_text(df_list[i]['values']))
             ]
             fig.add_trace(go.Scatter(x = df_list[i]['Time'], y = [-1*i]*len(df_list[i]), 
-                                  mode = "lines+markers", name = levels[i], line = dict(width=1), marker = dict(symbol=marker_symbols[0]),
+                                  mode = "lines+markers", name = levels[i], line = dict(width=1), marker = dict(symbol=marker_symbols[i]),
                                   hovertext = hover_text))
 
             # annotate name of the each message (it is resource consuming but go.Scatter do not provide better option)
@@ -530,6 +531,63 @@ class bagreader:
         # Customize the layout (optional)
         fig.update_layout(
             title='diagnostics',
+            xaxis_title='Time',
+            yaxis_title='Message',
+        )
+        
+        fig.show()
+        
+        
+    def plot_rosout(self, topic_name="/rosout", name_filter=[], annotate_names=False):
+        import math
+        
+        if topic_name and (not self.update_topic_dataframe(topic=topic_name) or not self.is_topic_type_valid(topic_name, 'rosgraph_msgs/Log')):
+            return
+
+        fig = go.Figure()
+        fig.layout['title'] = topic_name
+        
+        # DEBUG=1 #debug level
+        # INFO=2  #general level
+        # WARN=4  #warning level
+        # ERROR=8 #error level
+        # FATAL=16 #fatal/critical level
+        levels = ['DEBUG', 'INFO', 'WARN', 'ERROR', 'FATAL']
+        df_list = [pd.DataFrame(columns=['Time','name','message'])] * 5
+        marker_symbols = np.array(['circle', 'square', 'diamond', 'cross','x'])
+        
+        for _, row in self.bag_df_dict[topic_name].iterrows():
+            if not name_filter or [name for name in name_filter if name in row['name']]:
+                df_list[int(math.log2(row.level))] = df_list[int(math.log2(row.level))].append({'Time': row.Time, 'name': row['name'], 'message': row.msg}, ignore_index=True)
+
+        for i in range(len(df_list)):
+            hover_text = [
+                f'{name}<br> {message}'
+                for name, message in zip(df_list[i]['name'], df_list[i]['message'])
+            ]
+            fig.add_trace(go.Scatter(x = df_list[i]['Time'], y = [-1*i]*len(df_list[i]), 
+                                  mode = "lines+markers", name = levels[i], line = dict(width=1), marker = dict(symbol=marker_symbols[i]),
+                                  hovertext = hover_text))
+
+            # annotate name of the each message (it is resource consuming but go.Scatter do not provide better option)
+            if annotate_names:
+                for x_val, text in zip(df_list[i]['Time'], df_list[i]['name']):
+                    fig.add_annotation(
+                      go.layout.Annotation(
+                          x=x_val,
+                          y=-1*i,
+                          text=text,
+                          showarrow=False,
+                          font=dict(size=10),
+                          xref='x',
+                          yref='y',
+                          textangle=90,  # Rotate the text by 90 degrees
+                      )
+                    )
+
+        # Customize the layout (optional)
+        fig.update_layout(
+            title='rosout',
             xaxis_title='Time',
             yaxis_title='Message',
         )
