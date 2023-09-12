@@ -1,7 +1,7 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 # coding: utf-8
 
-# Author : Rahul Bhadani
+# Author : Rahul Bhadani, Aykut Kabaoglu
 # Initial Date: March 2, 2020
 # About: bagreader class to read  ros bagfile and extract relevant data
 # License: MIT License
@@ -29,18 +29,10 @@
 
 __author__ = 'Rahul Bhadani, Aykut Kabaoglu'
 __email__  = 'rahulbhadani@email.arizona.edu, aykutkabaoglu@gmail.com'
-__version__ = "0.0.0" # this is set to actual version later
-
 
 import rosbag
-from std_msgs.msg import String, Header
-from geometry_msgs.msg  import Twist, Pose, PoseStamped
-from nav_msgs.msg import Path, Odometry
-from geometry_msgs.msg import Point, Twist
-from sensor_msgs.msg import LaserScan
-from diagnostic_msgs.msg import DiagnosticArray
 
-
+import copy
 import numpy  as np
 import pandas as pd
 from scipy.spatial.transform import Rotation
@@ -49,85 +41,6 @@ import plotly.graph_objects as go
 import dash
 from dash import dcc, html
 from dash.dependencies import Input, Output, State
-from dash.exceptions import PreventUpdate
-
-from packaging import version
-
-from pathlib import Path
-import copy
-
-version_src = ''
-
-try:
-    import importlib.resources as pkg_resources
-    with pkg_resources.path('bagpy', 'version') as rsrc:
-        version_src = rsrc
-except ImportError:
-    # Try backported to PY<37 `importlib_resources`.
-    print("Python older than 3.7 detected. ")
-    try:
-        import importlib_resources as pkg_resources
-        with pkg_resources.path('bagpy', 'version') as rsrc:
-            version_src = rsrc
-    except ImportError:
-        print("importlib_resources not found. Install backported importlib_resources through `pip install importlib-resources`")
-
-try:
-    v = Path(version_src).open(encoding = "utf-8").read().splitlines()
-except TypeError:
-    v = Path(str(version_src)).open(encoding = "utf-8").read().splitlines()
-__version__ = v[0].strip()
-
-def timeout(func, args=(), timeout_duration=2, default=None, **kwargs):
-    """This spwans a thread and runs the given function using the args, kwargs and
-    return the given default value if the timeout_duration is exceeded
-    """
-    import threading
-
-    class InterruptableThread(threading.Thread):
-        def __init__(self):
-            threading.Thread.__init__(self)
-            self.result = default
-
-        def run(self):
-            try:
-                self.result = func(*args, **kwargs)
-            except:
-                pass
-
-    it = InterruptableThread()
-    it.start()
-    it.join(timeout_duration)
-    return it.result
-
-def get_latest_bagpy_version():
-    from subprocess import check_output, CalledProcessError
-
-    try:  # needs to work offline as well
-        result = check_output(["yolk", "-V", "bagpy"])
-        return result.split()[1].decode("utf-8")
-    except CalledProcessError:
-        return "0.0.0"
-
-
-def check_for_latest_version():
-
-    latest_version = timeout(
-        get_latest_bagpy_version, timeout_duration=5, default="0.0.0"
-    )
-    if version.parse(__version__) < version.parse(latest_version):
-        import warnings
-        warnings.warn("{}\n{}\n{}\n{}\n{}\n{}".format(
-            "There is a newer version of bagpy available on PyPI:\n",
-            "Your version: \t",
-            __version__,
-            "Latest version: \t",
-            latest_version,
-            "Consider updating it by using command pip install --upgrade bagpy"
-        ))
-
-
-check_for_latest_version()
 
 class bagreader:
     '''
