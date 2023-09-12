@@ -139,10 +139,7 @@ class bagreader:
         Bagreader constructor takes name of a bag file as an  argument. name of the bag file can be provided as the full qualified path, relative path or just the file name.
 
     Attributes
-    --------------
-    bagfile: `string`
-        Full path of the bag  file, e.g `/home/ece446/2019-08-21-22-00-00.bag`
-    
+    --------------    
     reader: `rosbag.Bag`
         rosbag.Bag object that 
 
@@ -160,8 +157,8 @@ class bagreader:
 
         E.g. If bag file is at `/home/ece446/2019-08-21-22-00-00.bag`, then datafolder is `/home/ece446/2019-08-21-22-00-00/`
 
-    message_dictionary: `dictionary`
-        message_dictionary will be a python dictionary to keep track of what datafile have been generated mapped by types
+    bag_df_dict: `dictionary`
+        dictionary to keep dataframes of each topic by name. it only stores the requested topics
 
     Example
     ---------
@@ -170,9 +167,8 @@ class bagreader:
     '''
 
     def __init__(self , bagfile):
-        self.bagfile = bagfile
 
-        self.reader = rosbag.Bag(self.bagfile)
+        self.reader = rosbag.Bag(bagfile)
 
         info = self.reader.get_type_and_topic_info() 
         self.topic_tuple = info.topics.values()
@@ -194,29 +190,29 @@ class bagreader:
         self.app = dash.Dash(__name__)
 
     def is_topic_found(self, topic_name):
+        '''
+        returns whether the topic is found in bag file
+        '''
         return bool(self.topic_table[self.topic_table['Topics'] == topic_name].index.array)
 
     def is_topic_type_valid(self, topic_name, topic_type):
+        '''
+        checks topic type is as desired
+        '''
         return bool((self.topic_table[self.topic_table['Topics'] == topic_name].Types.array == topic_type)[0])
 
     def update_topic_dataframe(self, topic):
         '''
         Class method `update_topic_dataframe` to extract message from the ROS Bag by topic name `topic` and stores it in the class's dataframe
-
+          It is intended to update the class attribute and is used a helper method like a private function
         Parameters
         ---------------
         topic: `str`
-            
             Topic from which to extract messages.
         Returns
         ---------
         `bool`
-            pandas dataframe
-
-        Example
-        -----------
-        >>> b = bagreader('bagfile.bag') 
-        >>> msg_file = b.update_topic_dataframe(topic='/catvehicle/vel')
+            result of the update process' success
         '''
         # do not read same topics multiple time
         if topic in self.bag_df_dict.keys():
@@ -225,13 +221,14 @@ class bagreader:
             print(topic, "is an invalid name, check topic_table")
             return False
           
+        # get messages and update topic dataframe dictionary
         try:
             data = []
             time = []
             cols = []
             for topic, msg, t in self.reader.read_messages(topics=topic, start_time=None, end_time=None): 
                 vals = []
-                cols.clear()
+                cols.clear() # to get the columns from the last iteration
                 # get precise time from header.stamp
                 time.append(t.secs + t.nsecs*1e-9)
                 # divide message into name index
@@ -323,7 +320,7 @@ class bagreader:
                 fig.add_trace(go.Scatter(x = self.bag_df_dict[topic_name]['Time'], y = self.bag_df_dict[topic_name][msg_index], 
                                          mode = "lines+markers", name = str(topic_name+"/"+msg_index), line=dict(width=1), marker=dict(symbol=marker_symbols[0])))
         
-        # Customize the layout (optional)
+        # Customize the layout
         title = ' '.join([str(elem) for elem in list(msg_dict.keys())])
         fig.update_layout(
             title=title,
@@ -358,7 +355,12 @@ class bagreader:
 
     def plot_laserscan(self, laser_topic=''):
         '''
-        plots the laserscan in polar coordinates
+        plots the laserscan in polar coordinates as an interactive graph and the viewing message can be updated by slider
+        
+        Parameters
+        ----------
+        laser_topic: `str` (optional)
+          topic name can be given otherwise it plots the first laserScan message in the topic_table if there is
         '''
         if laser_topic and (not self.update_topic_dataframe(topic=laser_topic) or not self.is_topic_type_valid(laser_topic, 'sensor_msgs/LaserScan')):
             return
@@ -387,7 +389,7 @@ class bagreader:
             slider callback: updates figure whenever slider is moved and keeps the zoom value
             '''
             row = self.bag_df_dict[laser_topic].loc[selected_value]
-            new_figure = copy.deepcopy(fig)
+            new_figure = copy.deepcopy(fig) # to deal with the concurrent requests
             new_figure.data = []
             angles = np.arange(row.angle_min, row.angle_max, row.angle_increment)
             new_figure.add_trace(
@@ -409,7 +411,12 @@ class bagreader:
 
     def plot_pointcloud(self, pointcloud_topic=''):
         '''
-        plots the pointcloud in cartesian coordinates
+        plots the pointcloud in cartesian coordinates as an interactive graph and the viewing message can be updated by slider
+        
+        Parameters
+        ----------
+        pointcloud_topic: `str` (optional)
+          topic name can be given otherwise it plots the first pointcloud message in the topic_table if there is
         '''      
         if pointcloud_topic and (not self.update_topic_dataframe(topic=pointcloud_topic) or not self.is_topic_type_valid(pointcloud_topic, 'sensor_msgs/PointCloud')):
             return
@@ -478,6 +485,18 @@ class bagreader:
         
         
     def plot_diagnostics(self, topic_name="/diagnostics", name_filter=[], annotate_names=False):
+        '''
+        plots diagnostics messages according the their levels like OK, WARN, ERROR, STALE. it hovers the details of each message over the graph
+        
+        Parameters
+        ----------
+        topic_name: `str`
+        name_filter: `list` (optional)
+          list of strings that can be used to plot only the desired named messages. it acts as searching and don't have to be exact name
+          if it is empty, plots all messages
+        annotate_names: `bool`
+          names can be viewed over the marker in addition to hover text. this is a time consuming process
+        '''
         if topic_name and (not self.update_topic_dataframe(topic=topic_name) or not self.is_topic_type_valid(topic_name, 'diagnostic_msgs/DiagnosticArray')):
             return
         
@@ -534,11 +553,22 @@ class bagreader:
             xaxis_title='Time',
             yaxis_title='Message',
         )
-        
         fig.show()
         
         
     def plot_rosout(self, topic_name="/rosout", name_filter=[], annotate_names=False):
+        '''
+        plots rosout messages according the their levels like DEBUG, INFO, WARN, ERROR, FATAL. it hovers the details of each message over the graph
+        
+        Parameters
+        ----------
+        topic_name: `str`
+        name_filter: `list` (optional)
+          list of strings that can be used to plot only the desired named messages. it acts as searching and don't have to be exact name
+          if it is empty, plots all messages
+        annotate_names: `bool`
+          names can be viewed over the marker in addition to hover text. this is a time consuming process
+        '''
         import math
         
         if topic_name and (not self.update_topic_dataframe(topic=topic_name) or not self.is_topic_type_valid(topic_name, 'rosgraph_msgs/Log')):
@@ -591,7 +621,6 @@ class bagreader:
             xaxis_title='Time',
             yaxis_title='Message',
         )
-        
         fig.show()
 
 def slotvalues(m, slot):
