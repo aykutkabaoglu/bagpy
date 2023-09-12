@@ -39,7 +39,7 @@ b.plot_diagnostics(name_filter=['searching_text'], annotate_names=False)
 ```
 Note: All plots are drawn according to the recorded ros::Time
 
-** Check the notebook for more options.
+** Check the [notebook](https://github.com/aykutkabaoglu/bagpy/blob/master/notebook/Bagpy%20tutorial.ipynb) for more options.
 
 ------------------------------------------------------
 # bagpy
