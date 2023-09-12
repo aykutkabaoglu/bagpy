@@ -166,7 +166,7 @@ class bagreader:
             self.bag_df_dict[topic] = df
             return True
         except:
-            print("Unknown error")
+            print("Couldn't get the message from bag file:", topic)
             return False
 
     def get_message_by_topic(self, topics):
@@ -208,7 +208,10 @@ class bagreader:
 
         orient_vec = [str(quaternion_indices[:-1]+'x'), str(quaternion_indices[:-1]+'y'), 
                       str(quaternion_indices[:-1]+'z'), str(quaternion_indices[:-1]+'w')]
-        df['Roll'],df['Pitch'],df['Yaw'] = np.transpose(Rotation.from_quat(df[orient_vec]).as_euler("xyz",degrees=True))
+        try:
+            df['Roll'],df['Pitch'],df['Yaw'] = np.transpose(Rotation.from_quat(df[orient_vec]).as_euler("xyz",degrees=True))
+        except:
+            print("Quaternion transform error")
         return(df)
 
     def plot(self, msg_dict, save_fig = False):
