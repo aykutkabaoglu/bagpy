@@ -27,18 +27,10 @@
 #   OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE
 #   OR OTHER DEALINGS IN THE SOFTWARE.
 
-__author__ = 'Rahul Bhadani'
-__email__  = 'rahulbhadani@email.arizona.edu'
+__author__ = 'Rahul Bhadani, Aykut Kabaoglu'
+__email__  = 'rahulbhadani@email.arizona.edu, aykutkabaoglu@gmail.com'
 __version__ = "0.0.0" # this is set to actual version later
 
-
-import sys
-import ntpath
-import os
-import time
-from io import BytesIO
-import csv
-import inspect
 
 import rosbag
 from std_msgs.msg import String, Header
@@ -46,17 +38,24 @@ from geometry_msgs.msg  import Twist, Pose, PoseStamped
 from nav_msgs.msg import Path, Odometry
 from geometry_msgs.msg import Point, Twist
 from sensor_msgs.msg import LaserScan
+from diagnostic_msgs.msg import DiagnosticArray
 
 
 import numpy  as np
 import pandas as pd
-import matplotlib.pyplot as plt
-import seaborn as sea
-import pickle
+from scipy.spatial.transform import Rotation
+import plotly.graph_objects as go
+
+import dash
+from dash import dcc, html
+from dash.dependencies import Input, Output, State
+from dash.exceptions import PreventUpdate
 
 from packaging import version
 
 from pathlib import Path
+import copy
+
 version_src = ''
 
 try:
@@ -133,24 +132,14 @@ check_for_latest_version()
 class bagreader:
     '''
     `bagreader` class provides API to read rosbag files in an effective easy manner with significant hassle.
-    This class is reimplementation of its MATLAB equivalent that can be found at https://github.com/jmscslgroup/ROSBagReader
 
     Parameters
     ----------------
     bagfile: `string`
         Bagreader constructor takes name of a bag file as an  argument. name of the bag file can be provided as the full qualified path, relative path or just the file name.
 
-    verbose: `bool`
-        If True, prints some relevant information. Default: `True`
-    
-    tmp: `bool`
-        If True, creates directory in /tmp folder. Default: `False`
-
     Attributes
-    --------------
-    bagfile: `string`
-        Full path of the bag  file, e.g `/home/ece446/2019-08-21-22-00-00.bag`
-    
+    --------------    
     reader: `rosbag.Bag`
         rosbag.Bag object that 
 
@@ -162,17 +151,14 @@ class bagreader:
     
     message_types:`list`, `string`
         stores all the available message types
-    
-    datafolder: `string`
-        stores the path/folder where bag file is present - may be relative to the bag file or full-qualified path.
 
     topic_table: `pandas.DataFrame`
         A pandas DataFrame showing list of topics, their types, frequencies and message counts
 
         E.g. If bag file is at `/home/ece446/2019-08-21-22-00-00.bag`, then datafolder is `/home/ece446/2019-08-21-22-00-00/`
 
-    message_dictionary: `dictionary`
-        message_dictionary will be a python dictionary to keep track of what datafile have been generated mapped by types
+    bag_df_dict: `dictionary`
+        dictionary to keep dataframes of each topic by name. it only stores the requested topics
 
     Example
     ---------
@@ -180,10 +166,9 @@ class bagreader:
 
     '''
 
-    def __init__(self , bagfile , verbose=True , tmp = False):
-        self.bagfile = bagfile
+    def __init__(self , bagfile):
 
-        self.reader = rosbag.Bag(self.bagfile)
+        self.reader = rosbag.Bag(bagfile)
 
         info = self.reader.get_type_and_topic_info() 
         self.topic_tuple = info.topics.values()
@@ -200,808 +185,443 @@ class bagreader:
 
         self.topic_table = pd.DataFrame(list(zip(self.topics, self.message_types, self.n_messages, self.frequency)), columns=['Topics', 'Types', 'Message Count', 'Frequency'])
 
-        self.start_time = self.reader.get_start_time()
-        self.end_time = self.reader.get_end_time()
+        # store all read topics' dataframe in a dictionary
+        self.bag_df_dict = {}
+        self.app = dash.Dash(__name__)
 
-        self.datafolder = bagfile[0:-4]
-
-        if tmp:
-            self.datafolder = '/tmp/' + bagfile.split('/')[-1][0:-4]
-
-        self.verbose = verbose
-
-        if os.path.exists(self.datafolder):
-            if self.verbose:
-                print("[INFO]  Data folder {0} already exists. Not creating.".format(self.datafolder))
-        else:
-            try:
-                os.mkdir(self.datafolder)
-            except OSError:
-                print("[ERROR] Failed to create the data folder {0}.".format(self.datafolder))
-            else:
-                if self.verbose:
-                    print("[INFO]  Successfully created the data folder {0}.".format(self.datafolder))
- 
-    def message_by_topic(self, topic):
+    def is_topic_found(self, topic_name):
         '''
-        Class method `message_by_topic` to extract message from the ROS Bag by topic name `topic`
+        returns whether the topic is found in bag file
+        '''
+        return bool(self.topic_table[self.topic_table['Topics'] == topic_name].index.array)
 
+    def is_topic_type_valid(self, topic_name, topic_type):
+        '''
+        checks topic type is as desired
+        '''
+        return bool((self.topic_table[self.topic_table['Topics'] == topic_name].Types.array == topic_type)[0])
+
+    def update_topic_dataframe(self, topic):
+        '''
+        Class method `update_topic_dataframe` to extract message from the ROS Bag by topic name `topic` and stores it in the class's dataframe
+          It is intended to update the class attribute and is used a helper method like a private function
         Parameters
         ---------------
         topic: `str`
-            
             Topic from which to extract messages.
         Returns
         ---------
-        `str`
-            The name of the csv file to which data from the `topic` has been extracted
-
-        Example
-        -----------
-        >>> b = bagreader('/home/ivory/CyverseData/ProjectSparkle/sparkle_n_1_update_rate_100.0_max_update_rate_100.0_time_step_0.01_logtime_30.0_2020-03-01-23-52-11.bag') 
-        >>> msg_file = b.message_by_topic(topic='/catvehicle/vel')
-
+        `bool`
+            result of the update process' success
         '''
-
-        msg_list = []
-        tstart =None
-        tend = None
-        time = []
-        for topic, msg, t in self.reader.read_messages(topics=topic, start_time=tstart, end_time=tend): 
-            time.append(t)
-            msg_list.append(msg)
-
-        msgs = msg_list
-
-        if len(msgs) == 0:
-            print("No data on the topic:{}".format(topic))
-            return None
-
-        # set column names from the slots
-        cols = ["Time"]
-        m0 = msgs[0]
-        slots = m0.__slots__
-        for s in slots:
-            v, s = slotvalues(m0, s)
-            if isinstance(v, tuple):
-                snew_array = [] 
-                p = list(range(0, len(v)))
-                snew_array = [s + "_" + str(pelem) for pelem in p]
-                s = snew_array
-            
-            if isinstance(s, list):
-                for i, s1 in enumerate(s):
-                    cols.append(s1)
-            else:
-                cols.append(s)
-        
-        tempfile = self.datafolder + "/" + topic.replace("/", "-") + ".csv"
-        file_to_write = ntpath.dirname(tempfile) + '/' + ntpath.basename(tempfile)[1:]
-
-        if sys.hexversion >= 0x3000000:
-            opencall = open(file_to_write, "w", newline='')
-        else:
-            opencall = open(file_to_write, 'wb')
-
-        with opencall as f:
-            writer = csv.writer(f)
-            writer.writerow(cols) # write the header
-            for i, m in enumerate(msgs):
-                slots = m.__slots__
+        # do not read same topics multiple time
+        if topic in self.bag_df_dict.keys():
+            return True
+        if not self.is_topic_found(topic):
+            print(topic, "is an invalid name, check topic_table")
+            return False
+          
+        # get messages and update topic dataframe dictionary
+        try:
+            data = []
+            time = []
+            cols = []
+            for topic, msg, t in self.reader.read_messages(topics=topic, start_time=None, end_time=None): 
                 vals = []
-                vals.append(time[i].secs + time[i].nsecs*1e-9)
+                cols.clear() # to get the columns from the last iteration
+                # get precise time from header.stamp
+                time.append(t.secs + t.nsecs*1e-9)
+                # divide message into name index
+                slots = msg.__slots__
                 for s in slots:
-                    v, s = slotvalues(m, s)
-                    if isinstance(v, tuple):
-                        snew_array = [] 
-                        p = list(range(0, len(v)))
-                        snew_array = [s + "_" + str(pelem) for pelem in p]
-                        s = snew_array
-
+                    v, s = slotvalues(msg, s)
                     if isinstance(s, list):
                         for i, s1 in enumerate(s):
                             vals.append(v[i])
+                            cols.append(s1)
                     else:
                         vals.append(v)
-                writer.writerow(vals)
+                        cols.append(s)
+                data.append(vals)
 
-        return file_to_write
+            df = pd.DataFrame(data, columns=cols)
+            # add roll, pitch, yaw columns to dataframe when quaternion message found
+            df = self.quaternion_to_euler(df)
+            # convert seconds to human readable date and time
+            df['Time'] = pd.to_datetime(time, unit='s')
+            # store newly generated dataframe
+            self.bag_df_dict[topic] = df
+            return True
+        except:
+            print("Unknown error")
+            return False
 
-    def laser_data(self, **kwargs):
+    def get_message_by_topic(self, topics):
         '''
-        Class method `laser_data` extracts laser data from the given file, assuming laser data is of type `sensor_msgs/LaserScan`.
-
-        Parameters
-        -------------
-        kwargs
-            variable keyword arguments
-
-        Returns
-        ---------
-        `list`
-            A list of strings. Each string will correspond to file path of CSV file that contains extracted data of laser scan type
-
-        Example
-        ----------
-        >>> b = bagreader('/home/ivory/CyverseData/ProjectSparkle/sparkle_n_1_update_rate_100.0_max_update_rate_100.0_time_step_0.01_logtime_30.0_2020-03-01-23-52-11.bag') 
-        >>> laserdatafile = b.laser_data()
-        >>> print(laserdatafile)
-
+        gets single topic name as a string or list of topic names and returns single dataframe or dataframe dictionary that it's keys are topic names
         '''
-        tstart =None
-        tend = None
-        
-        type_to_look ="sensor_msgs/LaserScan"
+        if type(topics) is list:
+            for topic in topics:
+               if not self.update_topic_dataframe(topic):
+                  return
+            return {k: self.bag_df_dict[k] for k in topics}
+        elif self.update_topic_dataframe(topics):
+            return self.bag_df_dict[topics]
+
+    def get_same_type_of_topics(self, type_to_look=""):
+        '''
+        collects the same type of topics and returns the list of topic names
+        '''
         table_rows = self.topic_table[self.topic_table['Types']==type_to_look]
         topics_to_read = table_rows['Topics'].values
         
-        column_names = ["Time",
-                                "header.seq", 
-                                "header.frame_id", 
-                                "angle_min" , 
-                                "angle_max", 
-                                "angle_increment", 
-                                "time_increment", 
-                                "scan_time", 
-                                "range_min", 
-                                "range_max"]
+        return topics_to_read
 
-        for p in range(0, 182):
-            column_names.append("ranges_" + str(p))
-        for p in range(0, 182):
-            column_names.append("intensities_" + str(p))
-
-        all_msg = []
-        csvlist = []
-        for i in range(len(table_rows)):
-            tempfile = self.datafolder + "/" + topics_to_read[i].replace("/", "-") + ".csv"
-            file_to_write = ntpath.dirname(tempfile) + '/' + ntpath.basename(tempfile)[1:]
-            if os.path.exists(file_to_write):
-                csvlist.append(file_to_write)
-                continue
-
-            if sys.hexversion >= 0x3000000:
-                opencall = open(file_to_write, "w", newline='')
-            else:
-                opencall = open(file_to_write, 'wb')
-
-            with opencall as f:
-                writer = csv.writer(f)
-                writer.writerow(column_names) # write the header
-                for topic, msg, t in self.reader.read_messages(topics=topics_to_read[i], start_time=tstart, end_time=tend): 
-                    #msg_list[k] = msg
-                    
-                    new_row = [t.secs + t.nsecs*1e-9, 
-                                            msg.header.seq, 
-                                            msg.header.frame_id, 
-                                            msg.angle_min,
-                                            msg.angle_max, 
-                                            msg.angle_increment, 
-                                            msg.time_increment, 
-                                            msg.scan_time,  
-                                            msg.range_min, 
-                                            msg.range_max]
-
-                    ranges = [None]*182
-                    intensities = [None]*182
-
-                    for ir, ran in enumerate(msg.ranges):
-                        ranges[ir] = ran
-
-                    for ir, ran in enumerate(msg.intensities):
-                        intensities[ir] = ran
-
-                    new_row  = new_row + ranges
-                    new_row = new_row + intensities
-                    writer.writerow(new_row)
-                
-            csvlist.append(file_to_write)
-        return csvlist
-
-    def vel_data(self, **kwargs):
+    def quaternion_to_euler(self, df):
         '''
-        Class method `vel_data` extracts velocity data from the given file, assuming laser data is of type `geometry_msgs/Twist`.
-
-        Parameters
-        -------------
-        kwargs
-            variable keyword arguments
-
-        Returns
-        ---------
-        `list`
-            A list of strings. Each string will correspond to file path of CSV file that contains extracted data of geometry_msgs/Twist type
-
-        Example
-        ----------
-        >>> b = bagreader('/home/ivory/CyverseData/ProjectSparkle/sparkle_n_1_update_rate_100.0_max_update_rate_100.0_time_step_0.01_logtime_30.0_2020-03-01-23-52-11.bag') 
-        >>> veldatafile = b.vel_data()
-        >>> print(veldatafile)
-
+        convert quaternions to euler if there is a quaternion type message
+        checks '.w' or 'w' pattern in the end of columns and adds 'Roll', 'Pitch', 'Yaw' columns to given dataframe
         '''
-        tstart = None
-        tend = None
-        
-        type_to_look ="geometry_msgs/Twist"
-        table_rows = self.topic_table[self.topic_table['Types']==type_to_look]
-        topics_to_read = table_rows['Topics'].values
-        
-        column_names = ["Time",
-                                "linear.x", 
-                                "linear.y", 
-                                "linear.z" , 
-                                "angular.x", 
-                                "angular.y", 
-                                "angular.z"]
+        quaternion_indices = ''
+        for column in df.columns:
+            if len(column) == 1 and column == 'w':
+                quaternion_indices = column
+                break
+            elif '.w' == column[-2::]:
+                quaternion_indices = column
+                break
+        if not quaternion_indices:
+            return df
 
-        csvlist = []
-        for i in range(len(table_rows)):
-            tempfile = self.datafolder + "/" + topics_to_read[i].replace("/", "-") + ".csv"
-            file_to_write = ntpath.dirname(tempfile) + '/' + ntpath.basename(tempfile)[1:]
-            if os.path.exists(file_to_write):
-                csvlist.append(file_to_write)
-                continue
+        orient_vec = [str(quaternion_indices[:-1]+'x'), str(quaternion_indices[:-1]+'y'), 
+                      str(quaternion_indices[:-1]+'z'), str(quaternion_indices[:-1]+'w')]
+        df['Roll'],df['Pitch'],df['Yaw'] = np.transpose(Rotation.from_quat(df[orient_vec]).as_euler("xyz",degrees=True))
+        return(df)
 
-            if sys.hexversion >= 0x3000000:
-                opencall = open(file_to_write, "w", newline='')
-            else:
-                opencall = open(file_to_write, 'wb')
-
-            with opencall as f:
-                writer = csv.writer(f)
-                writer.writerow(column_names) # write the header
-                for topic, msg, t in self.reader.read_messages(topics=topics_to_read[i], start_time=tstart, end_time=tend):
-                    
-                    new_row = [t.secs + t.nsecs*1e-9, 
-                                            msg.linear.x, 
-                                            msg.linear.y,
-                                            msg.linear.z,
-                                            msg.angular.x,
-                                            msg.angular.y,
-                                            msg.angular.z]
-
-                    writer.writerow(new_row)
-
-            csvlist.append(file_to_write)
-        return csvlist
-
-    def std_data(self, **kwargs):
+    def plot(self, msg_dict, save_fig = False):
         '''
-        Class method `std_data` extracts all the std_msgs data from the given file, assuming laser data is of type `std_msgs/{bool, byte, Float32, Float64, Int16, Int32, Int8, UInt16, UInt32, UInt64, UInt8}` of 1-dimension.
-
-        Parameters
-        -------------
-        kwargs
-            variable keyword arguments
-
-        Returns
-        ---------
-        `list`
-            A list of strings. Each string will correspond to file path of CSV file that contains extracted data of `std_msgs/{bool, byte, Float32, Float64, Int16, Int32, Int8, UInt16, UInt32, UInt64, UInt8}`
-
-        Example
-        ----------
-        >>> b = bagreader('/home/ivory/CyverseData/ProjectSparkle/sparkle_n_1_update_rate_100.0_max_update_rate_100.0_time_step_0.01_logtime_30.0_2020-03-01-23-52-11.bag') 
-        >>> stddatafile = b.std_data()
-        >>> print(stddatafile)
-
-        '''
-        tstart = None
-        tend = None
-        
-        type_to_look =["std_msgs/Bool", "'std_msgs/Byte", "std_msgs/Float32", "std_msgs/Float64",
-                                    "std_msgs/Int8", "std_msgs/Int16", "std_msgs/Int32",
-                                    "std_msgs/Uint8", "std_msgs/Uint16", "std_msgs/Uint32"]
-
-        table_rows = self.topic_table[self.topic_table['Types'].isin(type_to_look)]
-        topics_to_read = table_rows['Topics'].values
-        
-        column_names = ["Time", "data"]
-
-        csvlist = []
-        for i in range(len(table_rows)):
-            tempfile = self.datafolder + "/" + topics_to_read[i].replace("/", "-") + ".csv"
-            file_to_write = ntpath.dirname(tempfile) + '/' + ntpath.basename(tempfile)[1:]
-            if os.path.exists(file_to_write):
-                csvlist.append(file_to_write)
-                continue
-
-            if sys.hexversion >= 0x3000000:
-                opencall = open(file_to_write, "w", newline='')
-            else:
-                opencall = open(file_to_write, 'wb')
-
-            with opencall as f:
-                writer = csv.writer(f)
-                writer.writerow(column_names) # write the header
-                for topic, msg, t in self.reader.read_messages(topics=topics_to_read[i], start_time=tstart, end_time=tend):
-                    
-                    new_row = [t.secs + t.nsecs*1e-9, 
-                                            msg.data]
-
-                    writer.writerow(new_row)
-
-            csvlist.append(file_to_write)
-        return csvlist
-
-    def compressed_images(self, **kwargs):
-        raise NotImplementedError("To be implemented")
-
-    def odometry_data(self, **kwargs):
-        '''
-        Class method `odometry_data` extracts odometry data from the given file, assuming laser data is of type `nav_msgs/Odometry`.
-
-        Parameters
-        -------------
-        kwargs
-            variable keyword arguments
-
-        Returns
-        ---------
-        `list`
-            A list of strings. Each string will correspond to file path of CSV file that contains extracted data of nav_msgs/Odometry type
-
-        Example
-        ----------
-        >>> b = bagreader('/home/ivory/CyverseData/ProjectSparkle/sparkle_n_1_update_rate_100.0_max_update_rate_100.0_time_step_0.01_logtime_30.0_2020-03-01-23-52-11.bag') 
-        >>> odomdatafile = b.odometry_data()
-        >>> print(odomdatafile)
-
-        '''
-        tstart = None
-        tend = None
-        
-        type_to_look ="nav_msgs/Odometry"
-        table_rows = self.topic_table[self.topic_table['Types']==type_to_look]
-        topics_to_read = table_rows['Topics'].values
-        
-        column_names = ["Time",
-                                "header.seq", 
-                                "header.frame_id", 
-                                "child_frame_id",
-                                "pose.x" , 
-                                "pose.y", 
-                                "pose.z", 
-                                "orientation.x", 
-                                "orientation.y", 
-                                "orientation.z",
-                                "orientation.w",
-                                "linear.x",
-                                "linear.y",
-                                "linear.z",
-                                "angular.x",
-                                "angular.y",
-                                "angular.z"]
-
-        csvlist = []
-        for i in range(len(table_rows)):
-            tempfile = self.datafolder + "/" + topics_to_read[i].replace("/", "-") + ".csv"
-            file_to_write = ntpath.dirname(tempfile) + '/' + ntpath.basename(tempfile)[1:]
-            if os.path.exists(file_to_write):
-                csvlist.append(file_to_write)
-                continue
-              
-            if sys.hexversion >= 0x3000000:
-                opencall = open(file_to_write, "w", newline='')
-            else:
-                opencall = open(file_to_write, 'wb')
-
-            with opencall as f:
-                writer = csv.writer(f)
-                writer.writerow(column_names) # write the header
-                for topic, msg, t in self.reader.read_messages(topics=topics_to_read[i], start_time=tstart, end_time=tend):
-                    new_row = [t.secs + t.nsecs*1e-9, 
-                                            msg.header.seq, 
-                                            msg.header.frame_id,
-                                            msg.child_frame_id,
-                                            msg.pose.pose.position.x,
-                                            msg.pose.pose.position.y,
-                                            msg.pose.pose.position.z,
-                                            msg.pose.pose.orientation.x,
-                                            msg.pose.pose.orientation.y,
-                                            msg.pose.pose.orientation.z,
-                                            msg.pose.pose.orientation.w,
-                                            msg.twist.twist.linear.x,
-                                            msg.twist.twist.linear.y,
-                                            msg.twist.twist.linear.z]
-
-                    writer.writerow(new_row)
-
-            csvlist.append(file_to_write)
-        return csvlist
-
-    def wrench_data(self, **kwargs):
-        '''
-        Class method `wrench_data` extracts velocity data from the given file, assuming laser data is of type `geometry_msgs/Wrench`.
-
-        Parameters
-        -------------
-        kwargs
-            variable keyword arguments
-
-        Returns
-        ---------
-        `list`
-            A list of strings. Each string will correspond to file path of CSV file that contains extracted data of geometry_msgs/Wrench type
-
-        Example
-        ----------
-        >>> b = bagreader('/home/ivory/CyverseData/ProjectSparkle/sparkle_n_1_update_rate_100.0_max_update_rate_100.0_time_step_0.01_logtime_30.0_2020-03-01-23-52-11.bag') 
-        >>> wrenchdatafile = b.wrench_data()
-        >>> print(wrenchdatafile)
-
-        '''
-        tstart = None
-        tend = None
-        
-        type_to_look ="geometry_msgs/Wrench"
-        table_rows = self.topic_table[self.topic_table['Types']==type_to_look]
-        topics_to_read = table_rows['Topics'].values
-        
-        column_names = ["Time",
-                                "force.x", 
-                                "force.y", 
-                                "force.z" , 
-                                "torque.x", 
-                                "torque.y", 
-                                "torque.z"]
-
-        csvlist = []
-        for i in range(len(table_rows)):
-            tempfile = self.datafolder + "/" + topics_to_read[i].replace("/", "-") + ".csv"
-            file_to_write = ntpath.dirname(tempfile) + '/' + ntpath.basename(tempfile)[1:]
-            if os.path.exists(file_to_write):
-                csvlist.append(file_to_write)
-                continue
-
-            if sys.hexversion >= 0x3000000:
-                opencall = open(file_to_write, "w", newline='')
-            else:
-                opencall = open(file_to_write, 'wb')
-
-            with opencall as f:
-                writer = csv.writer(f)
-                writer.writerow(column_names) # write the header
-                for topic, msg, t in self.reader.read_messages(topics=topics_to_read[i], start_time=tstart, end_time=tend):
-                    
-                    new_row = [t.secs + t.nsecs*1e-9, 
-                                            msg.force.x, 
-                                            msg.force.y,
-                                            msg.force.z,
-                                            msg.torque.x,
-                                            msg.torque.y,
-                                            msg.torque.z]
-
-                    writer.writerow(new_row)
-
-            csvlist.append(file_to_write)
-        return csvlist
-
-    def clock_data(self, **kwargs):
-        '''
-        Class method `vel_data` extracts clock data from the given file, assuming laser data is of type `rosgraph_msgs/Clock`.
-
-        Parameters
-        -------------
-        kwargs
-            variable keyword arguments
-
-        Returns
-        ---------
-        `list`
-            A list of strings. Each string will correspond to file path of CSV file that contains extracted data of rosgraph_msgs/Clock type
-
-        Example
-        ----------
-        >>> b = bagreader('/home/ivory/CyverseData/ProjectSparkle/sparkle_n_1_update_rate_100.0_max_update_rate_100.0_time_step_0.01_logtime_30.0_2020-03-01-23-52-11.bag') 
-        >>> clockdatafile = b.clock_data()
-        >>> print(clockdatafile)
-
-        '''
-        tstart = None
-        tend = None
-        
-        type_to_look ="rosgraph_msgs/Clock"
-        table_rows = self.topic_table[self.topic_table['Types']==type_to_look]
-        topics_to_read = table_rows['Topics'].values
-        
-        column_names = ["Time",
-                                "clock.secs", 
-                                "clock.nsecs"]
-
-        csvlist = []
-        for i in range(len(table_rows)):
-            tempfile = self.datafolder + "/" + topics_to_read[i].replace("/", "-") + ".csv"
-            file_to_write = ntpath.dirname(tempfile) + '/' + ntpath.basename(tempfile)[1:]
-            if os.path.exists(file_to_write):
-                csvlist.append(file_to_write)
-                continue
-
-            if sys.hexversion >= 0x3000000:
-                opencall = open(file_to_write, "w", newline='')
-            else:
-                opencall = open(file_to_write, 'wb')
-
-            with opencall as f:
-                writer = csv.writer(f)
-                writer.writerow(column_names) # write the header
-                for topic, msg, t in self.reader.read_messages(topics=topics_to_read[i], start_time=tstart, end_time=tend):
-                    new_row = [t.secs + t.nsecs*1e-9, 
-                                            msg.clock.secs, 
-                                            msg.clock.nsecs]
-
-                    writer.writerow(new_row)
-
-            csvlist.append(file_to_write)
-        return csvlist
-
-    def pointcloud_data(self, **kwargs):
-        raise NotImplementedError("To be implemented")
-
-    def plot_vel(self, save_fig = False):
-        '''
-        `plot_vel` plots the timseries velocity data
+        plots the timseries given topic and its indexes
         
         Parameters
         -------------
         save_fig: `bool`
 
         If `True` figures are saved in the data directory.
-
         '''
-        import IPython 
-        shell_type = IPython.get_ipython().__class__.__name__
-
-        if shell_type == 'ZMQInteractiveShell':
-            IPython.get_ipython().run_line_magic('matplotlib', 'inline')
-
-        csvfiles = self.vel_data()
+        fig = go.Figure()
+        marker_symbols = np.array(['circle', 'square', 'diamond', 'cross'])
+        legend = []
+        for topic_name in msg_dict:
+            if not self.update_topic_dataframe(topic_name):
+                return
+            for msg_index in msg_dict[topic_name]:
+                legend.append(msg_index)
+                marker_symbols = np.roll(marker_symbols,1)
+                fig.add_trace(go.Scatter(x = self.bag_df_dict[topic_name]['Time'], y = self.bag_df_dict[topic_name][msg_index], 
+                                         mode = "lines+markers", name = str(topic_name+"/"+msg_index), line=dict(width=1), marker=dict(symbol=marker_symbols[0])))
         
-        dataframes = [None]*len(csvfiles)
-
-        # read the csvfiles into pandas dataframe
-        for i, csv in enumerate(csvfiles):
-            df = pd.read_csv(csv)
-            dataframes[i] = df
-
-        fig, axs = create_fig(len(csvfiles))
-
-        for i, df in enumerate(dataframes):
-            axs[i].scatter(x = 'Time', y='linear.x', data=df, marker='D',  linewidth=0.3, s = 9, color="#2E7473")
-            axs[i].scatter(x = 'Time', y='linear.y', data=df, marker='s',  linewidth=0.3, s = 9, color="#EE5964")
-            axs[i].scatter(x = 'Time', y='linear.z', data=df, marker='p',  linewidth=0.3, s = 9, color="#ED9858")
-            axs[i].scatter(x = 'Time', y='angular.x', data=df, marker='P',  linewidth=0.3, s = 9, color="#1c54b2")
-            axs[i].scatter(x = 'Time', y='angular.y', data=df, marker='*',  linewidth=0.3, s = 9, color="#004F4A")
-            axs[i].scatter(x = 'Time', y='angular.z', data=df, marker='8',  linewidth=0.3, s = 9, color="#4F4A00")
-            axs[i].legend(df.columns.values[1:])
-
-            if shell_type in ['ZMQInteractiveShell', 'TerminalInteractiveShell']:
-                axs[i].set_title(ntpath.basename(csvfiles[i]), fontsize=16)
-                axs[i].set_xlabel('Time', fontsize=14)
-                axs[i].set_ylabel('Messages', fontsize=14)
-            else:
-                axs[i].set_title(ntpath.basename(csvfiles[i]), fontsize=12)
-                axs[i].set_xlabel('Time', fontsize=10)
-                axs[i].set_ylabel('Messages', fontsize=10)
-        fig.tight_layout()
-        suffix = ''
-        if len(self.datafolder) < 100:
-            suffix = '\n' + self.datafolder
-        if shell_type in ['ZMQInteractiveShell', 'TerminalInteractiveShell']:
-            fig.suptitle("Velocity Timeseries Plot"+suffix, fontsize = 14, y = 1.02)
-        else:
-             fig.suptitle("Velocity Timeseries Plot"+suffix, fontsize = 10, y = 1.02)
-
+        # Customize the layout
+        title = ' '.join([str(elem) for elem in list(msg_dict.keys())])
+        fig.update_layout(
+            title=title,
+            xaxis_title='Time',
+            yaxis_title='Message',
+        )
         if save_fig:
-            current_fig = plt.gcf()
-            fileToSave = self.datafolder + "/" + _get_func_name()
+            fig.write_image("plot.pdf")
 
-            with open(fileToSave + ".pickle", 'wb') as f:
-                pickle.dump(fig, f) 
-            current_fig.savefig(fileToSave + ".pdf", dpi = 100) 
-            current_fig.savefig(fileToSave + ".png", dpi = 100) 
+        fig.show()
 
-        plt.show()
-
-    def plot_std(self, save_fig = False):
+    def run_server(self):
+        self.app.run_server(debug=False)
+        
+    def app_properties(self, fig, msg_size):
         '''
-        `plot_std` plots the timseries standard Messages such as  `std_msgs/{bool, byte, Float32, Float64, Int16, Int32, Int8, UInt16, UInt32, UInt64, UInt8}` of 1-dimension
+        layout properties of the dash
+        '''
+        self.app.layout = html.Div([
+        dcc.Graph(id='scatter-plot', figure=fig),
+        dcc.Slider(
+              id='slider',
+              min=1,
+              max=msg_size,
+              step=1,
+              value=1,
+              tooltip={"placement": "bottom", "always_visible": True},
+              marks={i: str(i) for i in range(0, msg_size, msg_size//10)},
+              updatemode='drag',
+          )
+        ])
+
+    def plot_laserscan(self, laser_topic=''):
+        '''
+        plots the laserscan in polar coordinates as an interactive graph and the viewing message can be updated by slider
         
         Parameters
-        -------------
-        save_fig: `bool`
-
-        If `True` figures are saved in the data directory.
+        ----------
+        laser_topic: `str` (optional)
+          topic name can be given otherwise it plots the first laserScan message in the topic_table if there is
         '''
-        import IPython 
-        shell_type = IPython.get_ipython().__class__.__name__
-
-        if shell_type == 'ZMQInteractiveShell':
-            IPython.get_ipython().run_line_magic('matplotlib', 'inline')
-
-        csvfiles = self.std_data()
+        if laser_topic and (not self.update_topic_dataframe(topic=laser_topic) or not self.is_topic_type_valid(laser_topic, 'sensor_msgs/LaserScan')):
+            return
+        else:
+            topic_list = self.get_same_type_of_topics("sensor_msgs/LaserScan")
+            if topic_list:
+                laser_topic = topic_list[0]
+                self.update_topic_dataframe(topic=laser_topic)
+            else:
+                print("There is no LaserScan message")
+                return
         
-        dataframes = [None]*len(csvfiles)
+        fig = go.Figure()
+        fig.update_polars(radialaxis_range=[0,self.bag_df_dict[laser_topic].range_max[0]])
+        fig.layout['title'] = laser_topic
 
-        # read the csvfiles into pandas dataframe
-        for i, csv in enumerate(csvfiles):
-            df = pd.read_csv(csv)
-            dataframes[i] = df
+        self.app_properties(fig, len(self.bag_df_dict[laser_topic]))
+      
+        @self.app.callback(
+        Output('scatter-plot', 'figure'),
+        [Input('slider', 'value')],
+        [State('scatter-plot', 'relayoutData')]
+        )
+        def update_figure(selected_value, relayout_data):
+            '''
+            slider callback: updates figure whenever slider is moved and keeps the zoom value
+            '''
+            row = self.bag_df_dict[laser_topic].loc[selected_value]
+            new_figure = copy.deepcopy(fig) # to deal with the concurrent requests
+            new_figure.data = []
+            angles = np.arange(row.angle_min, row.angle_max, row.angle_increment)
+            new_figure.add_trace(
+                go.Scatterpolargl(
+                    r = row.ranges,
+                    theta = angles,
+                    thetaunit = 'radians',
+                    mode = "markers",
+                    marker = dict(size=2),
+                    name = 'Timestamp:' + str(row.Time),
+                    showlegend = True
+                ))
+            if relayout_data and 'polar.radialaxis.range' in relayout_data:
+                new_figure['layout.polar.radialaxis.range'] = relayout_data['polar.radialaxis.range']
+            return new_figure
+          
+        update_figure(0, fig['layout'])
+        self.run_server()
 
-        fig, axs = create_fig(len(csvfiles))
+    def plot_pointcloud(self, pointcloud_topic=''):
+        '''
+        plots the pointcloud in cartesian coordinates as an interactive graph and the viewing message can be updated by slider
+        
+        Parameters
+        ----------
+        pointcloud_topic: `str` (optional)
+          topic name can be given otherwise it plots the first pointcloud message in the topic_table if there is
+        '''      
+        if pointcloud_topic and (not self.update_topic_dataframe(topic=pointcloud_topic) or not self.is_topic_type_valid(pointcloud_topic, 'sensor_msgs/PointCloud')):
+            return
+        else:
+            topic_list = self.get_same_type_of_topics("sensor_msgs/PointCloud")
+            if topic_list:
+                pointcloud_topic = topic_list[0]
+                self.update_topic_dataframe(topic=pointcloud_topic)
+            else:
+                print("There is no PointCloud message")
+                return
+        
+        # declare axis range before plotting the data. causes additional iteration but provides static and easy visualization
+        min_x, min_y, min_z, max_x, max_y, max_z = 10000, 10000, 10000, 0, 0, 0
+        for points in self.bag_df_dict[pointcloud_topic].points:
+            x_values = [point.x for point in points]
+            y_values = [point.y for point in points]
+            z_values = [point.z for point in points]
+            min_x, max_x = min(min(x_values), min_x), max(max(x_values), max_x)
+            min_y, max_y = min(min(y_values), min_y), max(max(y_values), max_y)
+            min_z, max_z = min(min(z_values), min_z), max(max(z_values), max_z)
+            
+        fig = go.Figure()
+        fig.layout['title'] = pointcloud_topic
+        
+        self.app_properties(fig, len(self.bag_df_dict[pointcloud_topic]))
+      
+        @self.app.callback(
+        Output('scatter-plot', 'figure'),
+        Input('slider', 'value'),
+        State('scatter-plot', 'relayoutData')
+        )
+        def update_figure(selected_value, relayout_data):
+            '''
+            slider callback: updates figure whenever slider is moved and keeps the zoom value
+            '''
+            row = self.bag_df_dict[pointcloud_topic].loc[selected_value]
+            new_figure = copy.deepcopy(fig)
+            new_figure.data = []
+            new_figure.add_trace(
+                go.Scatter3d(
+                    x = [point.x for point in row.points],
+                    y = [point.y for point in row.points],
+                    z = [point.z for point in row.points],
+                    mode = "markers",
+                    marker = dict(size=2),
+                    name = 'Timestamp:' + str(row.Time),
+                    showlegend = True
+                ))
 
-        if len(csvfiles) == 0:
-            print("No standard data found")
+            if relayout_data:
+                new_figure['layout'] = relayout_data
+                
+            new_figure.update_layout(scene=dict(
+                aspectmode='manual',
+                aspectratio={'x':abs(max_x-min_x), 'y':abs(max_y-min_y), 'z':abs(max_z-min_z)},
+                xaxis = dict(range=[min_x, max_x], ticks='outside', tickwidth=5, tickcolor='red'),
+                yaxis = dict(range=[min_y, max_y], ticks='outside', tickwidth=5, tickcolor='green'),
+                zaxis = dict(range=[min_z, max_z], ticks='outside', tickwidth=5, tickcolor='blue'),
+            ))
+                
+            return new_figure
+          
+        update_figure(0, fig['layout'])
+        self.run_server()
+        
+        
+    def plot_diagnostics(self, topic_name="/diagnostics", name_filter=[], annotate_names=False):
+        '''
+        plots diagnostics messages according the their levels like OK, WARN, ERROR, STALE. it hovers the details of each message over the graph
+        
+        Parameters
+        ----------
+        topic_name: `str`
+        name_filter: `list` (optional)
+          list of strings that can be used to plot only the desired named messages. it acts as searching and don't have to be exact name
+          if it is empty, plots all messages
+        annotate_names: `bool`
+          names can be viewed over the marker in addition to hover text. this is a time consuming process
+        '''
+        if topic_name and (not self.update_topic_dataframe(topic=topic_name) or not self.is_topic_type_valid(topic_name, 'diagnostic_msgs/DiagnosticArray')):
+            return
+        
+        def keys_to_text(values):
+            text_list = []
+            for keys in values:
+                text_list.append([f'{value}<br>' for value in keys])
+            return text_list
+        
+        fig = go.Figure()
+        fig.layout['title'] = topic_name
+        
+        # OK=0
+        # WARN=1
+        # ERROR=2
+        # STALE=3
+        levels = ['OK', 'WARN', 'ERROR', 'STALE']
+        df_list = [pd.DataFrame(columns=['Time','name','message','hardware_id','values'])] * 4
+        marker_symbols = np.array(['circle', 'square', 'diamond', 'cross'])
+        
+        for _, row in self.bag_df_dict[topic_name].iterrows():
+            for state in row.status:
+                if not name_filter or [name for name in name_filter if name in state.name]:
+                    df_list[state.level] = df_list[state.level].append({'Time': row.Time, 'name': state.name, 'message': state.message, 'hardware_id': state.hardware_id, 'values': state.values}, ignore_index=True)
+
+        for i in range(len(df_list)):
+            hover_text = [
+                f'{name}<br> {message}<br> {values}'
+                for name, message, values in zip(df_list[i]['name'], df_list[i]['message'], keys_to_text(df_list[i]['values']))
+            ]
+            fig.add_trace(go.Scatter(x = df_list[i]['Time'], y = [-1*i]*len(df_list[i]), 
+                                  mode = "lines+markers", name = levels[i], line = dict(width=1), marker = dict(symbol=marker_symbols[i]),
+                                  hovertext = hover_text))
+
+            # annotate name of the each message (it is resource consuming but go.Scatter do not provide better option)
+            if annotate_names:
+                for x_val, text in zip(df_list[i]['Time'], df_list[i]['name']):
+                    fig.add_annotation(
+                      go.layout.Annotation(
+                          x=x_val,
+                          y=-1*i,
+                          text=text,
+                          showarrow=False,
+                          font=dict(size=10),
+                          xref='x',
+                          yref='y',
+                          textangle=90,  # Rotate the text by 90 degrees
+                      )
+                    )
+
+        # Customize the layout (optional)
+        fig.update_layout(
+            title='diagnostics',
+            xaxis_title='Time',
+            yaxis_title='Message',
+        )
+        fig.show()
+        
+        
+    def plot_rosout(self, topic_name="/rosout", name_filter=[], annotate_names=False):
+        '''
+        plots rosout messages according the their levels like DEBUG, INFO, WARN, ERROR, FATAL. it hovers the details of each message over the graph
+        
+        Parameters
+        ----------
+        topic_name: `str`
+        name_filter: `list` (optional)
+          list of strings that can be used to plot only the desired named messages. it acts as searching and don't have to be exact name
+          if it is empty, plots all messages
+        annotate_names: `bool`
+          names can be viewed over the marker in addition to hover text. this is a time consuming process
+        '''
+        import math
+        
+        if topic_name and (not self.update_topic_dataframe(topic=topic_name) or not self.is_topic_type_valid(topic_name, 'rosgraph_msgs/Log')):
             return
 
-        for i, df in enumerate(dataframes):
-            axs[i].scatter(x = 'Time', y='data', data=df, marker='D',  linewidth=0.3, s = 9, color="#2E7473")
-            axs[i].legend(df.columns.values[1:])
-            if shell_type in ['ZMQInteractiveShell', 'TerminalInteractiveShell']:
-                axs[i].set_title(ntpath.basename(csvfiles[i]), fontsize=16)
-                axs[i].set_xlabel('Time', fontsize=14)
-                axs[i].set_ylabel('Messages', fontsize=14)
-            else:
-                axs[i].set_title(ntpath.basename(csvfiles[i]), fontsize=12)
-                axs[i].set_xlabel('Time', fontsize=10)
-                axs[i].set_ylabel('Messages', fontsize=10)
-        suffix = ''
-        if len(self.datafolder) < 100:
-            suffix = '\n' + self.datafolder
-        if shell_type in ['ZMQInteractiveShell', 'TerminalInteractiveShell']:
-            fig.suptitle("Standard Messages Timeseries Plot"+suffix, fontsize = 14, y = 1.02)
-        else:
-             fig.suptitle("Standard Messages Timeseries Plot"+suffix, fontsize = 10, y = 1.02)
-        fig.tight_layout()
-        if save_fig:
-            current_fig = plt.gcf()
-            fileToSave = self.datafolder + "/" + _get_func_name()
-
-            with open(fileToSave + ".pickle", 'wb') as f:
-                pickle.dump(fig, f) 
-            current_fig.savefig(fileToSave + ".pdf", dpi = 300) 
+        fig = go.Figure()
+        fig.layout['title'] = topic_name
         
-        plt.show()
-
-    def plot_odometry(self, save_fig = False):
-        '''
-        `plot_odometry` plots the timseries odometry data
+        # DEBUG=1 #debug level
+        # INFO=2  #general level
+        # WARN=4  #warning level
+        # ERROR=8 #error level
+        # FATAL=16 #fatal/critical level
+        levels = ['DEBUG', 'INFO', 'WARN', 'ERROR', 'FATAL']
+        df_list = [pd.DataFrame(columns=['Time','name','message'])] * 5
+        marker_symbols = np.array(['circle', 'square', 'diamond', 'cross','x'])
         
-        Parameters
-        -------------
-        save_fig: `bool`
+        for _, row in self.bag_df_dict[topic_name].iterrows():
+            if not name_filter or [name for name in name_filter if name in row['name']]:
+                df_list[int(math.log2(row.level))] = df_list[int(math.log2(row.level))].append({'Time': row.Time, 'name': row['name'], 'message': row.msg}, ignore_index=True)
 
-        If `True` figures are saved in the data directory.
-        '''
-        import IPython 
-        shell_type = IPython.get_ipython().__class__.__name__
+        for i in range(len(df_list)):
+            hover_text = [
+                f'{name}<br> {message}'
+                for name, message in zip(df_list[i]['name'], df_list[i]['message'])
+            ]
+            fig.add_trace(go.Scatter(x = df_list[i]['Time'], y = [-1*i]*len(df_list[i]), 
+                                  mode = "lines+markers", name = levels[i], line = dict(width=1), marker = dict(symbol=marker_symbols[i]),
+                                  hovertext = hover_text))
 
-        if shell_type == 'ZMQInteractiveShell':
-            IPython.get_ipython().run_line_magic('matplotlib', 'inline')
+            # annotate name of the each message (it is resource consuming but go.Scatter do not provide better option)
+            if annotate_names:
+                for x_val, text in zip(df_list[i]['Time'], df_list[i]['name']):
+                    fig.add_annotation(
+                      go.layout.Annotation(
+                          x=x_val,
+                          y=-1*i,
+                          text=text,
+                          showarrow=False,
+                          font=dict(size=10),
+                          xref='x',
+                          yref='y',
+                          textangle=90,  # Rotate the text by 90 degrees
+                      )
+                    )
 
-        csvfiles = self.odometry_data()
-        
-        dataframes = [None]*len(csvfiles)
-
-        # read the csvfiles into pandas dataframe
-        for i, csv in enumerate(csvfiles):
-            df = pd.read_csv(csv)
-            dataframes[i] = df
-
-        fig, axs = create_fig(len(csvfiles))     
-      
-        for i, df in enumerate(dataframes):
-            axs[i].scatter(x = 'Time', y='pose.x', data=df, marker='D',  linewidth=0.3,s = 9, color="#2E7473")
-            axs[i].scatter(x = 'Time', y='pose.y', data=df, marker='D',  linewidth=0.3, s = 9, color="#EE5964")
-            axs[i].scatter(x = 'Time', y='pose.z', data=df, marker='D',  linewidth=0.3, s = 9, color="#ED9858")
-            axs[i].scatter(x = 'Time', y='orientation.x', data=df, marker='*',  linewidth=0.3, s = 9, color="#1c54b2")
-            axs[i].scatter(x = 'Time', y='orientation.y', data=df, marker='*',  linewidth=0.3, s = 9, color="#004F4A")
-            axs[i].scatter(x = 'Time', y='orientation.z', data=df, marker='8',  linewidth=0.3, s = 9, color="#4F4A00")
-            axs[i].scatter(x = 'Time', y='orientation.w', data=df, marker='8',  linewidth=0.3, s = 9, color="#004d40")
-            axs[i].scatter(x = 'Time', y='linear.x', data=df, marker='s',  linewidth=0.3, s = 9, color="#ba68c8")
-            axs[i].scatter(x = 'Time', y='linear.y', data=df, marker='s',  linewidth=0.3, s = 9, color="#2C0C32")
-            axs[i].scatter(x = 'Time', y='linear.z', data=df, marker='P',  linewidth=0.3, s = 9, color="#966851")
-            axs[i].scatter(x = 'Time', y='angular.x', data=df, marker='P', linewidth=0.3, s = 9, color="#517F96")
-            axs[i].scatter(x = 'Time', y='angular.y', data=df, marker='p', linewidth=0.3, s = 9, color="#B3C1FC")
-            axs[i].scatter(x = 'Time', y='angular.z', data=df, marker='p', linewidth=0.3, s = 9, color="#FCEFB3")
-            axs[i].legend(df.columns.values[4:])
-            if shell_type in ['ZMQInteractiveShell', 'TerminalInteractiveShell']:
-                axs[i].set_title(ntpath.basename(csvfiles[i]), fontsize=16)
-                axs[i].set_xlabel('Time', fontsize=14)
-                axs[i].set_ylabel('Messages', fontsize=14)
-            else:
-                axs[i].set_title(ntpath.basename(csvfiles[i]), fontsize=12)
-                axs[i].set_xlabel('Time', fontsize=10)
-                axs[i].set_ylabel('Messages', fontsize=10)
-
-        suffix = ''
-        if len(self.datafolder) < 100:
-            suffix = '\n' + self.datafolder
-        if shell_type in ['ZMQInteractiveShell', 'TerminalInteractiveShell']:
-            fig.suptitle("Odometry Timeseries Plot"+suffix, fontsize = 14, y = 1.02)
-        else:
-             fig.suptitle("Odometry Timeseries Plot"+suffix, fontsize = 10, y = 1.02)
-        fig.tight_layout()
-        if save_fig:
-            current_fig = plt.gcf()
-            fileToSave = self.datafolder + "/" + _get_func_name()
-
-            with open(fileToSave + ".pickle", 'wb') as f:
-                pickle.dump(fig, f) 
-            current_fig.savefig(fileToSave + ".pdf", dpi = 100) 
-            current_fig.savefig(fileToSave + ".png", dpi = 100) 
-
-        plt.show()
-
-    def plot_wrench(self, save_fig = False):
-        '''
-        `plot_wrench` plots the timseries wrench data
-        
-        Parameters
-        -------------
-        save_fig: `bool`
-
-        If `True` figures are saved in the data directory.
-        '''
-
-        import IPython 
-        shell_type = IPython.get_ipython().__class__.__name__
-
-        if shell_type == 'ZMQInteractiveShell':
-            IPython.get_ipython().run_line_magic('matplotlib', 'inline')
-
-        csvfiles = self.wrench_data()
-        
-        dataframes = [None]*len(csvfiles)
-
-        # read the csvfiles into pandas dataframe
-        for i, csv in enumerate(csvfiles):
-            df = pd.read_csv(csv)
-            dataframes[i] = df
-
-        fig, axs = create_fig(len(csvfiles))
-
-        for i, df in enumerate(dataframes):
-            axs[i].scatter(x = 'Time', y='force.x', data=df, marker='D',  linewidth=0.3, s = 9, color="#2E7473")
-            axs[i].scatter(x = 'Time', y='force.y', data=df, marker='s',  linewidth=0.3, s = 9, color="#EE5964")
-            axs[i].scatter(x = 'Time', y='force.z', data=df, marker='*',  linewidth=0.3, s = 9, color="#ED9858")
-            axs[i].scatter(x = 'Time', y='torque.x', data=df, marker='P',  linewidth=0.3, s = 9, color="#1c54b2")
-            axs[i].scatter(x = 'Time', y='torque.y', data=df, marker='p',  linewidth=0.3, s = 9, color="#004F4A")
-            axs[i].scatter(x = 'Time', y='torque.z', data=df, marker='8',  linewidth=0.3, s = 9, color="#4F4A00")
-            axs[i].legend(df.columns.values[1:])
-            if shell_type in ['ZMQInteractiveShell', 'TerminalInteractiveShell']:
-                axs[i].set_title(ntpath.basename(csvfiles[i]), fontsize=16)
-                axs[i].set_xlabel('Time', fontsize=14)
-                axs[i].set_ylabel('Messages', fontsize=14)
-            else:
-                axs[i].set_title(ntpath.basename(csvfiles[i]), fontsize=12)
-                axs[i].set_xlabel('Time', fontsize=10)
-                axs[i].set_ylabel('Messages', fontsize=10)
-
-        suffix = ''
-        if len(self.datafolder) < 100:
-            suffix = '\n' + self.datafolder
-        if shell_type in ['ZMQInteractiveShell', 'TerminalInteractiveShell']:
-            fig.suptitle("Wrench Timeseries Plot"+suffix, fontsize = 14, y = 1.02)
-        else:
-             fig.suptitle("Wrench Timeseries Plot"+suffix, fontsize = 10, y = 1.02)
-        fig.tight_layout()
-        if save_fig:
-            current_fig = plt.gcf()
-            fileToSave = self.datafolder + "/" + _get_func_name()
-
-            with open(fileToSave + ".pickle", 'wb') as f:
-                pickle.dump(fig, f) 
-            current_fig.savefig(fileToSave + ".pdf", dpi = 300) 
-
-        plt.show()
-
-    def animate_laser(self):
-        raise NotImplementedError("To be implemented")
-
-    def animate_pointcloud(self):
-        raise NotImplementedError("To be implemented")
-
+        # Customize the layout (optional)
+        fig.update_layout(
+            title='rosout',
+            xaxis_title='Time',
+            yaxis_title='Message',
+        )
+        fig.show()
 
 def slotvalues(m, slot):
     vals = getattr(m, slot)
@@ -1022,252 +642,3 @@ def slotvalues(m, slot):
         return varray, sarray
     except AttributeError:
         return vals, slot
-        
-def _get_func_name():
-    return inspect.stack()[1][3]
-
-def animate_timeseries(time, message, **kwargs):
-    '''
-    `animate_timeseries` will animate a time series data. Time and Message pandas series are expected
-    
-    
-    Parameters
-    ----------
-    
-    time: `pandas.core.series.Series`
-        Time Vector in the form of Pandas Timeseries
-        
-    message: `pandas.core.series.Series`
-        Message Vector in the form of Pandas Timeseries
-        
-    
-    kwargs: variable keyword arguments
-            
-        title: `str`
-
-            Title of the plot. By Default, it is `Timeseries Plot`
-            
-    '''
-    
-    
-    import IPython 
-    shell_type = IPython.get_ipython().__class__.__name__
-    
-    
-    assert (len(time) == len(message)), ("Time and Message Vector must be of same length. Current Length of Time Vector: {0}, Current Length of Message Vector: {0}".format(len(time), len(message)))
-    
-    plot_title = 'Timeseries Plot'
-    try:
-        plot_title = kwargs["title"]
-    except KeyError as e:
-        pass
-
-    fig, ax = create_fig(1)
-    ax = ax[0]
-    plt.style.use('ggplot')
-    plt.rcParams['figure.figsize'] = [15, 10]
-    plt.rcParams['font.size'] = 16.0
-    plt.rcParams['legend.fontsize'] = 14.0
-    plt.rcParams['xtick.labelsize'] = 14.0
-    plt.rcParams['ytick.labelsize'] = 14.0
-    plt.rcParams['legend.markerscale']  = 2.0
-
-    if shell_type in ['ZMQInteractiveShell', 'TerminalInteractiveShell']:
-
-        if shell_type == 'ZMQInteractiveShell':
-            IPython.get_ipython().run_line_magic('matplotlib', 'inline')
-        
-        print('Warning: Animation is being executed in IPython/Jupyter Notebook. Animation may not be real-time.')
-        l, = ax.plot([np.min(time),np.max(time)],[np.min(message),np.max(message)], alpha=0.6, 
-                     marker='o', markersize=5, linewidth=0, markerfacecolor='#275E56')
-
-
-        def animate(i):
-
-            l.set_data(time[:i], message[:i])
-            ax.set_xlabel('Time', fontsize=15)
-            ax.set_ylabel('Message', fontsize=15)
-            ax.set_title(plot_title, fontsize=16)
-
-        for index in range(len(message)-1):
-            animate(index)
-            IPython.display.clear_output(wait=True)
-            display(fig)
-            plt.pause(time[index + 1] - time[index])
-
-    else:
-        for index in range(0, len(message)-1):
-            ax.clear()
-            if index < 500:
-                sea.lineplot(time[:index], message[:index],  linewidth=2.0, color="#275E56")
-            else:
-                sea.lineplot(time[index - 500:index], message[index - 500:index],  linewidth=2.0, color="#275E56")
-            ax.set_title(plot_title, fontsize=16)
-            ax.set_xlabel('Time', fontsize=15)
-            ax.set_ylabel('Message', fontsize=15)
-            plt.draw()
-            plt.pause(time[index + 1] - time[index])
-
-def timeindex(df, inplace=False):
-    '''
-    Convert multi Dataframe of which on column must be 'Time'  to pandas-compatible timeseries where timestamp is used to replace indices
-
-    Parameters
-    --------------
-
-    df: `pandas.DataFrame`
-        A pandas dataframe with two columns with the column names "Time" and "Message"
-
-    inplace: `bool`
-        Modifies the actual dataframe, if true, otherwise doesn't.
-
-    Returns
-    -----------
-    `pandas.DataFrame`
-        Pandas compatible timeseries with a single column having column name "Message" where indices are timestamp in hum  an readable format.
-    '''
-    
-    if inplace:
-        newdf = df
-    else:
-        newdf =df.copy(deep = True)
-
-    newdf['Time'] = df['Time']
-    Time = pd.to_datetime(newdf['Time'], unit='s')
-    newdf['Clock'] = pd.DatetimeIndex(Time)
-    
-    if inplace:
-        newdf.set_index('Clock', inplace=inplace)
-    else:
-        newdf = newdf.set_index('Clock')
-    return newdf
-
-def _setplots(**kwargs):
-    import IPython 
-    
-    shell_type = IPython.get_ipython().__class__.__name__
-
-    ncols = 1
-    nrows= 1
-    if kwargs.get('ncols'):
-        ncols = kwargs['ncols']
-
-    if kwargs.get('nrows'):
-        nrows = kwargs['nrows']
-
-    if shell_type in ['ZMQInteractiveShell', 'TerminalInteractiveShell']:
-
-        plt.style.use('default')
-        plt.rcParams['figure.figsize'] = [12*ncols, 6*nrows]
-        plt.rcParams['font.size'] = 22.0 + 3*(ncols-1)
-        plt.rcParams["font.family"] = "serif"
-        plt.rcParams["mathtext.fontset"] = "dejavuserif"
-        plt.rcParams['figure.facecolor'] = '#ffffff'
-        #plt.rcParams[ 'font.family'] = 'Roboto'
-        #plt.rcParams['font.weight'] = 'bold'
-        plt.rcParams['xtick.color'] = '#01071f'
-        plt.rcParams['xtick.minor.visible'] = True
-        plt.rcParams['ytick.minor.visible'] = True
-        plt.rcParams['xtick.labelsize'] = 16 + 2*(ncols-1)
-        plt.rcParams['ytick.labelsize'] = 16 + 2*(ncols-1)
-        plt.rcParams['ytick.color'] = '#01071f'
-        plt.rcParams['axes.labelcolor'] = '#000000'
-        plt.rcParams['text.color'] = '#000000'
-        plt.rcParams['axes.labelcolor'] = '#000000'
-        plt.rcParams['grid.color'] = '#f0f1f5'
-        plt.rcParams['axes.labelsize'] = 20+ 3*(ncols-1)
-        plt.rcParams['axes.titlesize'] = 25+ 3*(ncols-1)
-        #plt.rcParams['axes.labelweight'] = 'bold'
-        #plt.rcParams['axes.titleweight'] = 'bold'
-        plt.rcParams["figure.titlesize"] = 30.0 + 4*(ncols-1) 
-        #plt.rcParams["figure.titleweight"] = 'bold'
-
-        plt.rcParams['legend.markerscale']  = 2.0
-        plt.rcParams['legend.fontsize'] = 10.0 + 3*(ncols-1)
-        plt.rcParams["legend.framealpha"] = 0.5
-        
-    else:
-        plt.style.use('default')
-        plt.rcParams['figure.figsize'] = [18*ncols, 6*nrows]
-        plt.rcParams["font.family"] = "serif"
-        plt.rcParams["mathtext.fontset"] = "dejavuserif"
-        plt.rcParams['font.size'] = 12.0
-        plt.rcParams['figure.facecolor'] = '#ffffff'
-        #plt.rcParams[ 'font.family'] = 'Roboto'
-        #plt.rcParams['font.weight'] = 'bold'
-        plt.rcParams['xtick.color'] = '#01071f'
-        plt.rcParams['xtick.minor.visible'] = True
-        plt.rcParams['ytick.minor.visible'] = True
-        plt.rcParams['xtick.labelsize'] = 10
-        plt.rcParams['ytick.labelsize'] = 10
-        plt.rcParams['ytick.color'] = '#01071f'
-        plt.rcParams['axes.labelcolor'] = '#000000'
-        plt.rcParams['text.color'] = '#000000'
-        plt.rcParams['axes.labelcolor'] = '#000000'
-        plt.rcParams['grid.color'] = '#f0f1f5'
-        plt.rcParams['axes.labelsize'] = 10
-        plt.rcParams['axes.titlesize'] = 10
-        #plt.rcParams['axes.labelweight'] = 'bold'
-        #plt.rcParams['axes.titleweight'] = 'bold'
-        plt.rcParams["figure.titlesize"] = 24.0
-        #plt.rcParams["figure.titleweight"] = 'bold'
-        plt.rcParams['legend.markerscale']  = 1.0
-        plt.rcParams['legend.fontsize'] = 8.0
-        plt.rcParams["legend.framealpha"] = 0.5
-        
-
-def create_fig(num_of_subplots=1, **kwargs):
-
-    import IPython 
-    shell_type = IPython.get_ipython().__class__.__name__
-
-
-    nrows = num_of_subplots
-    ncols = 1
-    
-    if kwargs.get('ncols'):
-        ncols = kwargs['ncols']
-    
-    if kwargs.get('nrows'):
-        nrows = kwargs['nrows']
-    
-    _setplots(ncols=ncols, nrows=nrows)
-    fig, ax = plt.subplots(ncols=ncols, nrows=nrows)
-    
-
-    if nrows == 1 and ncols == 1:
-        ax_ = []
-        ax_.append(ax)
-        ax = ax_
-    else:
-        ax = ax.ravel()
-
-    if sys.hexversion >= 0x3000000:
-        for a in ax:
-            a.minorticks_on()
-            a.grid(which='major', linestyle='-', linewidth='0.25', color='dimgray')
-            a.grid(which='minor', linestyle=':', linewidth='0.25', color='dimgray')
-            a.patch.set_facecolor('#fafafa')
-            a.spines['bottom'].set_color('#161616')
-            a.spines['top'].set_color('#161616')
-            a.spines['right'].set_color('#161616')
-            a.spines['left'].set_color('#161616')
-    else:
-        for a in ax:
-            a.minorticks_on()
-            a.grid(True, which='both')
-            
-    fig.tight_layout(pad=0.3*nrows)
-    return fig, ax
-
-
-def set_colorbar(fig, ax, im, label):
-    from mpl_toolkits.axes_grid1.inset_locator import inset_axes
-    axins1 = inset_axes(ax,
-                width="50%",  # width = 50% of parent_bbox width
-                height="3%",  # height : 5%
-                loc='upper right')
-    cbr = fig.colorbar(im, ax=ax, cax=axins1, orientation="horizontal")
-    cbr.set_label(label, fontsize = 20)
-
-    return cbr
