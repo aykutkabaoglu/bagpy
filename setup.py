@@ -29,7 +29,9 @@ required_packages=[
         'pandas',
         'setuptools-scm',
         'importlib-resources',
-        'matplotlib',
+        'kaleido',
+        'plotly',
+        'dash'
         ]
 
 extra_packages = {'dev':['ytsphinx',
