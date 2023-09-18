@@ -37,7 +37,8 @@ b.plot_rosout('/rosout',name_filter=['mapping', 'searching_text'], annotate_name
 b.plot_diagnostics(name_filter=['searching_text'], annotate_names=False)
 # b.plot_diagnostics()
 ```
-Note: All plots are drawn according to the recorded ros::Time
+Note 1: All plots are drawn according to the recorded ros::Time.
+Note 2: Except sensor_msgs/LaserScan and sensor_msgs/TTPointCloud messages, array-type messages are not supported.
 
 ** Check the [notebook](https://github.com/aykutkabaoglu/bagpy/blob/master/notebook/Bagpy%20tutorial.ipynb) for more options.
 
